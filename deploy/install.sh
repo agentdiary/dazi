@@ -31,7 +31,21 @@ die()  { printf '\033[1;31m错误:\033[0m %s\n' "$*" >&2; exit 1; }
 
 # ---------------------------------------------------------------- 域名与端口
 
-PUBLIC_IP="${DAZI_IP:-$(curl -fsS --max-time 8 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')}"
+# 云主机常常是 NAT 出网（网卡上只有内网地址），所以优先问外部服务要公网 IP。
+detect_ip() {
+  local ip svc
+  for svc in https://api.ipify.org https://ifconfig.me/ip https://ipinfo.io/ip; do
+    ip="$(curl -fsS --max-time 6 "$svc" 2>/dev/null | tr -d '[:space:]')" || true
+    [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && { echo "$ip"; return; }
+  done
+  hostname -I | awk '{print $1}'
+}
+
+PUBLIC_IP="${DAZI_IP:-$(detect_ip)}"
+if [[ "$PUBLIC_IP" =~ ^(10\.|127\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.) && -z "${DAZI_DOMAIN:-}" ]]; then
+  warn "探测到的 ${PUBLIC_IP} 是内网地址，用它拼出来的免费域名在公网上解析不到。"
+  warn "请改用：sudo DAZI_DOMAIN=${APP_NAME}.<你的公网IP>.sslip.io bash deploy/install.sh"
+fi
 DOMAIN="${DAZI_DOMAIN:-${APP_NAME}.${PUBLIC_IP}.sslip.io}"
 EMAIL="${DAZI_EMAIL:-admin@${DOMAIN}}"
 
