@@ -35,7 +35,15 @@ PUBLIC_IP="${DAZI_IP:-$(curl -fsS --max-time 8 https://api.ipify.org 2>/dev/null
 DOMAIN="${DAZI_DOMAIN:-${APP_NAME}.${PUBLIC_IP}.sslip.io}"
 EMAIL="${DAZI_EMAIL:-admin@${DOMAIN}}"
 
-# 挑一个没被占用的本地端口，避免和服务器上已有的服务撞车
+# 端口：已经部署过就沿用原端口（避免重复部署时端口漂移），
+# 否则挑一个没被占用的，避免和服务器上已有的服务撞车。
+existing_port() {
+  local unit=/etc/systemd/system/${APP_NAME}.service
+  [[ -f $unit ]] || return 1
+  sed -n 's/^Environment=DAZI_PORT=\([0-9]\+\)$/\1/p' "$unit" | head -1 | grep -q . || return 1
+  sed -n 's/^Environment=DAZI_PORT=\([0-9]\+\)$/\1/p' "$unit" | head -1
+}
+
 pick_port() {
   local candidate
   for candidate in 8088 8089 8090 8091 8092 8093; do
@@ -45,7 +53,7 @@ pick_port() {
   done
   echo 8099
 }
-PORT="${DAZI_PORT:-$(pick_port)}"
+PORT="${DAZI_PORT:-$(existing_port || pick_port)}"
 
 log "域名     : ${DOMAIN}"
 log "公网 IP  : ${PUBLIC_IP}"
