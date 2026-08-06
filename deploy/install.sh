@@ -149,8 +149,24 @@ rsync -a --delete \
   --exclude '.git' --exclude 'data' --exclude 'node_modules' --exclude '.github' \
   "$REPO_DIR"/ "$APP_DIR"/
 chown -R root:root "$APP_DIR"
+# 注意：rsync -a 会把源目录自身的权限也同步过来。如果是从 mktemp -d（0700）
+# 建的目录部署的，/opt/dazi 会变成 root 独占，服务账号连 chdir 都进不去
+# （systemd 报 status=200/CHDIR）。所以这里显式规范化：目录 755、文件 644。
+chmod -R u=rwX,go=rX "$APP_DIR"
+if [[ -d "$RUNTIME_DIR" ]]; then chmod -R u=rwX,go=rX "$RUNTIME_DIR"; fi
 chown -R "$SERVICE_USER":"$SERVICE_USER" "$DATA_DIR"
 chmod 750 "$DATA_DIR"
+
+# 起服务之前先确认服务账号真的进得去、读得到，别等 systemd 报 200/CHDIR 才发现
+if ! runuser -u "$SERVICE_USER" -- test -x "$APP_DIR"; then
+  die "服务账号 ${SERVICE_USER} 无法进入 ${APP_DIR}（权限 $(stat -c %a "$APP_DIR")）"
+fi
+if ! runuser -u "$SERVICE_USER" -- test -r "${APP_DIR}/server/index.js"; then
+  die "服务账号 ${SERVICE_USER} 读不到 ${APP_DIR}/server/index.js"
+fi
+if ! runuser -u "$SERVICE_USER" -- "$NODE_BIN" -e 'process.exit(0)'; then
+  die "服务账号 ${SERVICE_USER} 执行不了 ${NODE_BIN}"
+fi
 
 # ---------------------------------------------------------------- systemd
 
