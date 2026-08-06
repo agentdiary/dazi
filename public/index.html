@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f7f5ef">
+<title>校园搭子 · 看板</title>
+<meta name="description" content="校园搭子社交看板：打球、羽毛球、看电影、搭饭、自习，一张看板找到同行的人。免注册直接发言，帖子可上锁。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧃</text></svg>">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">搭</span>
+    <div class="brand-text">
+      <strong>校园搭子</strong>
+      <small>一张看板，找到一起干的人</small>
+    </div>
+  </div>
+
+  <div class="topbar-tools">
+    <label class="search">
+      <span aria-hidden="true">🔎</span>
+      <input id="search" type="search" placeholder="搜标题 / 校区 / 项目…" autocomplete="off">
+    </label>
+    <button id="mineToggle" class="ghost-btn" type="button" aria-pressed="false">只看我的</button>
+    <button id="createBtn" class="primary-btn" type="button">＋ 发起搭子</button>
+    <button id="meBtn" class="me-chip" type="button" title="我的身份">
+      <span class="avatar" id="meAvatar">🙂</span>
+      <span class="me-nick" id="meNick">…</span>
+    </button>
+  </div>
+</header>
+
+<nav class="filters" id="filters" aria-label="活动分类"></nav>
+
+<main class="board" id="board" aria-label="搭子看板"></main>
+
+<footer class="foot">
+  <span id="connState" class="conn"><i></i>实时连接中…</span>
+  <span>免注册 · 身份由服务器签发并长期保持一致 · 帖子可上锁</span>
+</footer>
+
+<!-- ============ 帖子详情 + 聊天 ============ -->
+<div class="overlay" id="detailOverlay" hidden>
+  <section class="sheet detail-sheet" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
+    <header class="sheet-head">
+      <div class="sheet-head-main">
+        <h2 id="detailTitle">…</h2>
+        <div class="sheet-sub" id="detailSub"></div>
+      </div>
+      <button class="icon-btn" data-close type="button" aria-label="关闭">✕</button>
+    </header>
+    <div class="detail-body" id="detailBody"></div>
+  </section>
+</div>
+
+<!-- ============ 发起搭子 ============ -->
+<div class="overlay" id="createOverlay" hidden>
+  <section class="sheet form-sheet" role="dialog" aria-modal="true" aria-labelledby="createTitle">
+    <header class="sheet-head">
+      <div class="sheet-head-main"><h2 id="createTitle">发起一个搭子局</h2>
+      <div class="sheet-sub">勾选多个想做的项目，报名的人各自选自己想去的那个</div></div>
+      <button class="icon-btn" data-close type="button" aria-label="关闭">✕</button>
+    </header>
+    <form id="createForm" class="form">
+      <label class="field">
+        <span>标题</span>
+        <input name="title" maxlength="40" required placeholder="例：周三晚上东区球场，缺俩人">
+      </label>
+
+      <div class="field">
+        <span>分类</span>
+        <div class="chip-row" id="catPicker"></div>
+      </div>
+
+      <div class="field">
+        <span>想一起做什么（可多选，报名者再投票）</span>
+        <div class="chip-row wrap" id="optPicker"></div>
+        <div class="custom-opt">
+          <input id="customOpt" maxlength="12" placeholder="自定义项目，如「爬山」">
+          <button type="button" id="addOpt" class="ghost-btn">添加</button>
+        </div>
+        <div class="chip-row wrap picked" id="pickedOpts"></div>
+      </div>
+
+      <div class="field-row">
+        <label class="field">
+          <span>时间</span>
+          <input name="timeText" maxlength="40" placeholder="周三 19:00">
+        </label>
+        <label class="field">
+          <span>地点</span>
+          <input name="place" maxlength="40" placeholder="东区体育馆">
+        </label>
+        <label class="field narrow">
+          <span>人数上限</span>
+          <input name="capacity" type="number" min="2" max="50" value="6">
+        </label>
+      </div>
+
+      <label class="field">
+        <span>校区 / 学校</span>
+        <input name="campus" maxlength="40" placeholder="例：××大学 紫金港校区">
+      </label>
+
+      <label class="field">
+        <span>补充说明</span>
+        <textarea name="desc" maxlength="300" rows="3" placeholder="装备、水平、AA 方式、集合点…"></textarea>
+      </label>
+
+      <div class="form-actions">
+        <span class="form-err" id="createErr"></span>
+        <button type="button" class="ghost-btn" data-close>取消</button>
+        <button type="submit" class="primary-btn">发布到看板</button>
+      </div>
+    </form>
+  </section>
+</div>
+
+<!-- ============ 我的身份 ============ -->
+<div class="overlay" id="meOverlay" hidden>
+  <section class="sheet form-sheet narrow-sheet" role="dialog" aria-modal="true" aria-labelledby="meTitle">
+    <header class="sheet-head">
+      <div class="sheet-head-main"><h2 id="meTitle">我的身份</h2>
+      <div class="sheet-sub">不用注册、不用密码。身份由服务器签发，全站统一。</div></div>
+      <button class="icon-btn" data-close type="button" aria-label="关闭">✕</button>
+    </header>
+    <form id="meForm" class="form">
+      <div class="identity-preview" id="identityPreview"></div>
+
+      <label class="field">
+        <span>昵称（全站唯一）</span>
+        <input name="nick" maxlength="16" required>
+      </label>
+      <div class="field">
+        <span>头像</span>
+        <div class="chip-row wrap" id="emojiPicker"></div>
+      </div>
+      <div class="field">
+        <span>底色</span>
+        <div class="chip-row wrap" id="colorPicker"></div>
+      </div>
+
+      <div class="form-actions">
+        <span class="form-err" id="meErr"></span>
+        <button type="submit" class="primary-btn">保存</button>
+      </div>
+    </form>
+
+    <div class="recovery">
+      <h3>换设备也保持同一个身份</h3>
+      <p>身份口令相当于你的「随身学生证」。在别的浏览器粘贴它，就还是同一个你。</p>
+      <div class="recovery-code" id="recoveryCode">••••-••••-••••-••••</div>
+      <div class="recovery-actions">
+        <button type="button" class="ghost-btn" id="showRecovery">生成新的身份口令</button>
+        <button type="button" class="ghost-btn" id="restoreBtn">用口令找回身份</button>
+      </div>
+      <p class="tiny">生成新口令后，旧口令立即失效。</p>
+    </div>
+  </section>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

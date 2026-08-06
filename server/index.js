@@ -1,0 +1,94 @@
+'use strict';
+
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const { PORT, HOST, PUBLIC_DIR } = require('./config');
+const store = require('./store');
+const api = require('./api');
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.ico': 'image/x-icon',
+  '.webmanifest': 'application/manifest+json',
+};
+
+function serveStatic(req, res, pathname) {
+  const rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
+  const file = path.join(PUBLIC_DIR, rel);
+  // 防目录穿越
+  if (!file.startsWith(PUBLIC_DIR + path.sep) && file !== path.join(PUBLIC_DIR, 'index.html')) {
+    return api.fail(res, 403, 'forbidden');
+  }
+  fs.readFile(file, (err, data) => {
+    if (err) {
+      // 前端是单页应用，未知路径回落到 index.html
+      if (!path.extname(rel)) {
+        return fs.readFile(path.join(PUBLIC_DIR, 'index.html'), (e2, html) => {
+          if (e2) return api.fail(res, 404, 'not found');
+          res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-cache' });
+          res.end(html);
+        });
+      }
+      return api.fail(res, 404, 'not found');
+    }
+    const ext = path.extname(file).toLowerCase();
+    res.writeHead(200, {
+      'Content-Type': MIME[ext] || 'application/octet-stream',
+      'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=300',
+    });
+    res.end(data);
+  });
+}
+
+const server = http.createServer((req, res) => {
+  let url;
+  try {
+    url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  } catch (_) {
+    return api.fail(res, 400, 'bad request');
+  }
+
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'same-origin');
+
+  if (url.pathname === '/healthz') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }));
+  }
+
+  if (url.pathname.startsWith('/api/')) {
+    return Promise.resolve(api.handle(req, res, url)).catch((err) => {
+      console.error('[api]', req.method, url.pathname, err);
+      if (!res.headersSent) api.fail(res, 400, err.message || '请求处理失败');
+    });
+  }
+
+  if (req.method !== 'GET' && req.method !== 'HEAD') return api.fail(res, 405, 'method not allowed');
+  return serveStatic(req, res, url.pathname);
+});
+
+// SSE 连接是长连接，不要被默认超时掐断
+server.requestTimeout = 0;
+server.headersTimeout = 60_000;
+server.keepAliveTimeout = 76_000;
+
+store.load();
+server.listen(PORT, HOST, () => {
+  console.log(`[dazi] 校园搭子 running on http://${HOST}:${PORT}`);
+});
+
+function shutdown(signal) {
+  console.log(`[dazi] ${signal} received, saving data...`);
+  store.saveSync();
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 3000).unref();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

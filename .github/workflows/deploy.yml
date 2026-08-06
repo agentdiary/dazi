@@ -1,0 +1,72 @@
+name: 部署到服务器
+
+# 需要在仓库 Settings → Secrets and variables → Actions 里配置：
+#   DEPLOY_HOST  服务器 IP，例如 43.130.127.226
+#   DEPLOY_USER  登录用户，例如 ubuntu
+#   DEPLOY_KEY   SSH 私钥全文（test.pem 的内容）
+# 可选变量（Variables）：
+#   DAZI_DOMAIN  自定义域名；不填则用免费的 dazi.<IP>.sslip.io
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-dazi
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: 冒烟测试
+        run: node test/smoke.js
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备 SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/deploy.pem
+          chmod 600 ~/.ssh/deploy.pem
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: 上传代码
+        run: |
+          tar czf /tmp/dazi.tar.gz --exclude .git --exclude node_modules --exclude data .
+          scp -i ~/.ssh/deploy.pem /tmp/dazi.tar.gz \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/tmp/dazi.tar.gz"
+
+      - name: 远程安装
+        run: |
+          ssh -i ~/.ssh/deploy.pem "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" bash -s <<'REMOTE'
+          set -euo pipefail
+          rm -rf ~/dazi-release && mkdir -p ~/dazi-release
+          tar xzf /tmp/dazi.tar.gz -C ~/dazi-release
+          cd ~/dazi-release
+          sudo -E DAZI_DOMAIN="${DAZI_DOMAIN:-}" bash deploy/install.sh
+          REMOTE
+        env:
+          DAZI_DOMAIN: ${{ vars.DAZI_DOMAIN }}
+
+      - name: 线上健康检查
+        run: |
+          DOMAIN="${{ vars.DAZI_DOMAIN }}"
+          [ -n "$DOMAIN" ] || DOMAIN="dazi.${{ secrets.DEPLOY_HOST }}.sslip.io"
+          for i in 1 2 3 4 5; do
+            if curl -fsS --max-time 10 "https://$DOMAIN/healthz" || curl -fsS --max-time 10 "http://$DOMAIN/healthz"; then
+              echo "站点已上线：$DOMAIN"; exit 0
+            fi
+            sleep 5
+          done
+          echo "健康检查未通过"; exit 1
