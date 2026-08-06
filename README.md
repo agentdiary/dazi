@@ -104,10 +104,21 @@ cd dazi
 sudo bash deploy/install.sh
 ```
 
-脚本会自动完成：装 Node → 安装到 `/opt/dazi`、数据放 `/var/lib/dazi` →
+脚本会自动完成：准备 Node 运行时 → 安装到 `/opt/dazi`、数据放 `/var/lib/dazi` →
 注册 `dazi.service`（systemd，开机自启、崩溃自动重启）→
 挑一个没被占用的本地端口 → 新增一个 nginx 站点（**不会动服务器上已有的站点**）→
 用 certbot 申请 HTTPS 证书。
+
+### 它不会碰服务器上已有的东西
+
+这台机器上通常还跑着别的项目，所以脚本刻意做了隔离：
+
+- **不动系统 node**：系统里的 node ≥ 18 就直接复用；低于 18 或者没装，
+  就把官方绿色版解压到 `/opt/dazi-runtime` 私有使用，systemd 里写死这个绝对路径，
+  既不改 PATH 也不覆盖 `/usr/bin/node`，别的项目的 node 版本保持原样；
+- **不动已有 nginx 站点**：只新增 `/etc/nginx/sites-available/dazi` 一个 server 块；
+- **不占已用端口**：自动挑空闲端口，重复部署时沿用上次的端口；
+- **只写自己的数据目录**：systemd 里 `ProtectSystem=strict` + `ReadWritePaths=/var/lib/dazi`。
 
 ### 免费域名
 

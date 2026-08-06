@@ -75,25 +75,63 @@ log "本地端口 : ${PORT}"
 
 # ---------------------------------------------------------------- 依赖
 
-need_node() {
-  command -v node >/dev/null 2>&1 || return 0
-  local major
-  major="$(node -v | sed 's/^v\([0-9]*\).*/\1/')"
-  [[ "$major" -lt 18 ]]
+# Node.js。这台机器上可能已经跑着别的项目，所以绝不去动系统里已有的 node：
+#   1. 系统 node 够新（>=18）就直接用；
+#   2. 不够新或者没装，就把官方绿色版解到 /opt/dazi-runtime 里私有使用，
+#      不改 PATH、不覆盖 /usr/bin/node —— 别的项目的环境保持原样。
+NODE_LTS=v24.19.0
+RUNTIME_DIR=/opt/${APP_NAME}-runtime
+
+node_major() { "$1" -v 2>/dev/null | sed 's/^v\([0-9]*\).*/\1/'; }
+
+resolve_node() {
+  local sys major
+  sys="$(command -v node || true)"
+  if [[ -n "$sys" ]]; then
+    major="$(node_major "$sys")"
+    if [[ -n "$major" && "$major" -ge 18 ]]; then
+      log "复用系统已有的 Node.js $("$sys" -v)（不做任何改动）"
+      NODE_BIN="$sys"; return
+    fi
+    warn "系统 Node.js 是 $("$sys" -v)，低于 18；不升级它，改用本项目私有的运行时。"
+  fi
+
+  # 已经装过私有运行时就直接复用
+  if [[ -x "${RUNTIME_DIR}/bin/node" ]] && [[ "$(node_major "${RUNTIME_DIR}/bin/node")" -ge 18 ]]; then
+    log "复用私有 Node.js $("${RUNTIME_DIR}/bin/node" -v)"
+    NODE_BIN="${RUNTIME_DIR}/bin/node"; return
+  fi
+
+  local arch
+  case "$(uname -m)" in
+    x86_64)  arch=x64 ;;
+    aarch64) arch=arm64 ;;
+    armv7l)  arch=armv7l ;;
+    *) die "不认识的 CPU 架构 $(uname -m)，请手动装好 Node.js >= 18 后重跑" ;;
+  esac
+
+  log "下载 Node.js ${NODE_LTS}-linux-${arch} 到 ${RUNTIME_DIR}（不影响系统 node）…"
+  local tarball=/tmp/node-${NODE_LTS}-${arch}.tar.xz
+  local url="https://nodejs.org/dist/${NODE_LTS}/node-${NODE_LTS}-linux-${arch}.tar.xz"
+  local mirror="https://mirrors.tuna.tsinghua.edu.cn/nodejs-release/${NODE_LTS}/node-${NODE_LTS}-linux-${arch}.tar.xz"
+
+  command -v xz >/dev/null 2>&1 || apt-get install -y -qq xz-utils
+  if ! curl -fsSL --max-time 180 "$url" -o "$tarball"; then
+    warn "nodejs.org 下载失败，改用清华镜像…"
+    curl -fsSL --max-time 180 "$mirror" -o "$tarball" \
+      || die "Node.js 下载失败，请检查服务器出网，或手动装好 Node >= 18 后重跑"
+  fi
+
+  rm -rf "$RUNTIME_DIR" && mkdir -p "$RUNTIME_DIR"
+  tar -xJf "$tarball" -C "$RUNTIME_DIR" --strip-components=1
+  rm -f "$tarball"
+  NODE_BIN="${RUNTIME_DIR}/bin/node"
+  [[ -x "$NODE_BIN" ]] || die "Node.js 解压后没找到可执行文件"
+  log "私有 Node.js $("$NODE_BIN" -v) 就绪"
 }
 
 export DEBIAN_FRONTEND=noninteractive
-
-if need_node; then
-  log "安装 Node.js…"
-  apt-get update -qq
-  apt-get install -y -qq nodejs || true
-  if need_node; then
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-    apt-get install -y -qq nodejs
-  fi
-fi
-log "Node.js $(node -v)"
+resolve_node
 
 command -v nginx >/dev/null 2>&1 || { log "安装 nginx…"; apt-get install -y -qq nginx; }
 command -v rsync >/dev/null 2>&1 || apt-get install -y -qq rsync
@@ -132,7 +170,7 @@ Environment=NODE_ENV=production
 Environment=DAZI_HOST=127.0.0.1
 Environment=DAZI_PORT=${PORT}
 Environment=DAZI_DATA_DIR=${DATA_DIR}
-ExecStart=$(command -v node) ${APP_DIR}/server/index.js
+ExecStart=${NODE_BIN} ${APP_DIR}/server/index.js
 Restart=always
 RestartSec=3
 
