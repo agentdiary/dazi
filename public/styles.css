@@ -74,7 +74,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
   flex-wrap: wrap;
 }
 
-.brand { display: flex; align-items: center; gap: 10px; margin-right: auto; }
+.brand { display: flex; align-items: center; gap: 10px; flex: 1 1 auto; min-width: 0; }
 
 .brand-mark {
   width: 38px; height: 38px;
@@ -161,7 +161,24 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 .filter-end { position: relative; flex: 0 0 auto; }
 
-.lang-btn { font-size: 12.5px; padding: 7px 12px; letter-spacing: .3px; }
+/*
+ * 语言按钮始终待在「校园搭子*莫纳什」那一行的右端：
+ * 宽屏整个顶栏就是一行，所以排到最后（order 3）落在行尾；
+ * 窄屏工具区会换行，让它紧跟品牌（order 1），和标题同处第一行的右端。
+ */
+.lang-btn {
+  font-size: 12.5px;
+  padding: 7px 12px;
+  letter-spacing: .3px;
+  flex: 0 0 auto;
+  order: 3;
+}
+.topbar-tools { order: 2; }
+
+/* 工具区在 1100px 以下会换行，此时让语言按钮紧跟品牌，留在第一行右端 */
+@media (max-width: 1060px) {
+  .lang-btn { order: 1; margin-left: auto; }
+}
 
 /* 品牌名后面的学校后缀 */
 .brand-suffix {
