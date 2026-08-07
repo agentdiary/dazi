@@ -652,6 +652,41 @@ async function main() {
     const adminDel = await adminClient('DELETE', `/api/posts/${someonePost}`);
     check('管理员能删除任何帖子', adminDel.status === 200);
 
+    console.log('\n中英双语');
+    const enFetch = (method, urlPath, body) => fetch(BASE + urlPath, {
+      method,
+      headers: { 'Content-Type': 'application/json', 'X-Dazi-Lang': 'en' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+
+    const metaEn = await (await enFetch('GET', '/api/meta')).json();
+    check('分类带英文标签', metaEn.categories.every((c) => c.labelEn), JSON.stringify(metaEn.categories[0]));
+    check('状态带英文标签和说明', metaEn.states.every((s) => s.labelEn && s.hintEn));
+    check('排序带英文标签', metaEn.sorts.every((s) => s.labelEn));
+    check('预设项目带英文标签', metaEn.presetOptions.every((o) => o.labelEn));
+
+    const errEn = await (await enFetch('GET', '/api/posts/deadbeefdead')).json();
+    check('英文请求返回英文错误', errEn.error === 'This post does not exist or has been deleted', errEn.error);
+    const errZh = await client()('GET', '/api/posts/deadbeefdead');
+    check('中文请求仍返回中文错误', errZh.data.error === '这个帖子不存在或已被删除');
+
+    // 帖子里存的是中文项目名，序列化时要补回英文名（老数据也照顾到）
+    const optPost = await host('POST', '/api/posts', {
+      title: '双语选项测试', category: 'ball', capacity: 4,
+      options: [{ label: '篮球', emoji: '🏀' }, { label: '我自定义的项目', emoji: '✨' }],
+    });
+    const optsEn = optPost.data.post.options;
+    check('预设项目补回英文名', optsEn[0].labelEn === 'Basketball', JSON.stringify(optsEn[0]));
+    check('自定义项目不硬翻，保持原样', !optsEn[1].labelEn);
+
+    // 英文浏览器首次访问应拿到英文昵称
+    const enVisitor = await (await enFetch('GET', '/api/me')).json();
+    check('英文访客拿到英文昵称', /^[A-Za-z][A-Za-z\- ]+$/.test(enVisitor.user.nick), enVisitor.user.nick);
+    const zhVisitor = await client()('GET', '/api/me');
+    check('中文访客仍是中文昵称', /[一-龥]/.test(zhVisitor.data.user.nick), zhVisitor.data.user.nick);
+
+    await host('DELETE', `/api/posts/${optPost.data.post.id}`);
+
     console.log('\n持久化');
     const del = await host('DELETE', `/api/posts/${postId}`);
     check('发起人可以删除帖子', del.status === 200);

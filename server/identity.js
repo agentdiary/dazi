@@ -15,6 +15,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const { SECRET_FILE, COOKIE_NAME, COOKIE_MAX_AGE, LIMITS, DATA_DIR } = require('./config');
+const i18n = require('./i18n');
 const store = require('./store');
 
 let SECRET = null;
@@ -46,6 +47,17 @@ const CREATURES = [
   '柯基', '布偶猫', '水豚', '柴犬', '仓鼠', '海獭', '企鹅', '树懒', '橘猫', '兔子',
   '熊猫', '狐狸', '鲸鱼', '刺猬', '鹦鹉', '羊驼',
 ];
+// 英文访客拿一个中文昵称会很莫名其妙，所以按语言分别生成
+const ADJECTIVES_EN = [
+  'Sleepy', 'Hoopful', 'Caffeinated', 'Early-bird', 'Library-dwelling', 'Bubble-tea',
+  'Night-owl', 'Always-hungry', 'Front-row', 'Deadline-chasing', 'Cat-petting', 'Well-fed',
+  'Wandering', 'Sunburnt', 'Overcommitted', 'Bike-riding',
+];
+const CREATURES_EN = [
+  'Corgi', 'Ragdoll', 'Capybara', 'Shiba', 'Hamster', 'Otter', 'Penguin', 'Sloth',
+  'Tabby', 'Rabbit', 'Panda', 'Fox', 'Whale', 'Hedgehog', 'Parrot', 'Alpaca',
+];
+
 const EMOJIS = ['🏀', '🏸', '🎬', '🍜', '📚', '🎮', '🎤', '🚴', '🧋', '🐱', '🏓', '🎧', '🥾', '🎲'];
 const COLORS = [
   '#ff8fab', '#ffb703', '#8ecae6', '#95d5b2', '#c8b6ff', '#ffd6a5',
@@ -75,12 +87,17 @@ function nickTaken(nick, exceptUid) {
   return false;
 }
 
-function generateNick() {
+function generateNick(lang) {
+  const en = lang === 'en';
+  const adjectives = en ? ADJECTIVES_EN : ADJECTIVES;
+  const creatures = en ? CREATURES_EN : CREATURES;
   for (let i = 0; i < 40; i++) {
-    const nick = `${pick(ADJECTIVES)}${pick(CREATURES)}`;
+    const nick = en ? `${pick(adjectives)} ${pick(creatures)}` : `${pick(adjectives)}${pick(creatures)}`;
     if (nick.length <= LIMITS.nick && !nickTaken(nick)) return nick;
   }
-  return `搭子${crypto.randomInt(100000, 999999)}`;
+  return en
+    ? `Buddy${crypto.randomInt(100000, 999999)}`
+    : `搭子${crypto.randomInt(100000, 999999)}`;
 }
 
 function makeRecoveryCode() {
@@ -126,12 +143,12 @@ function parseCookies(req) {
   return out;
 }
 
-function createUser() {
+function createUser(lang) {
   const uid = crypto.randomBytes(8).toString('hex');
   const code = makeRecoveryCode();
   const user = {
     uid,
-    nick: generateNick(),
+    nick: generateNick(lang),
     emoji: pick(EMOJIS),
     color: pick(COLORS),
     createdAt: Date.now(),
@@ -181,7 +198,7 @@ function identify(req, res, { create = true } = {}) {
     return { user: db.users[uid], fresh: false, recoveryCode: null };
   }
   if (!create) return null;
-  const { user, recoveryCode } = createUser();
+  const { user, recoveryCode } = createUser(i18n.langOf(req));
   setIdentityCookie(res, user.uid, isSecureRequest(req));
   return { user, fresh: true, recoveryCode };
 }

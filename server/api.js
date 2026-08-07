@@ -8,6 +8,7 @@ const presence = require('./presence');
 const notify = require('./notify');
 const mailer = require('./mailer');
 const auth = require('./auth');
+const i18n = require('./i18n');
 const { LIMITS, REQUIRE_LOGIN } = require('./config');
 
 /* ---------------------------------------------------------------- 基础工具 */
@@ -23,7 +24,11 @@ function json(res, status, body) {
 }
 
 const ok = (res, body) => json(res, 200, body);
-const fail = (res, status, message) => json(res, status, { error: message });
+
+// 所有错误都从这里出去，所以翻译只在这一个出口做一次；
+// res.daziLang 由 handle() 在入口处按请求头写好。
+const fail = (res, status, message) =>
+  json(res, status, { error: i18n.t(message, res.daziLang) });
 
 function readBody(req, limit = 64 * 1024) {
   return new Promise((resolve, reject) => {
@@ -110,6 +115,7 @@ function broadcastPost(post, event, payload) {
 async function handle(req, res, url) {
   const path = url.pathname;
   const method = req.method;
+  res.daziLang = i18n.langOf(req);
 
   /* --- 元信息：分类 / 泳道 / 预设项目 --- */
   if (path === '/api/meta' && method === 'GET') {

@@ -4,6 +4,10 @@
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
+// i18n 快捷方式：t 翻译文案，L 取 meta 项的本地化标签
+const t = (zh, vars) => I18N.t(zh, vars);
+const L = (item) => I18N.label(item);
+
 const state = {
   me: null,
   meta: null,
@@ -28,8 +32,13 @@ const state = {
 async function api(path, options = {}) {
   const res = await fetch(path, {
     credentials: 'same-origin',
-    headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
     ...options,
+    // 带上语言，服务端的错误信息也会跟着切
+    headers: {
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      'X-Dazi-Lang': I18N.get(),
+      ...(options.headers || {}),
+    },
   });
   let data = null;
   try { data = await res.json(); } catch (_) { /* 空响应 */ }
@@ -81,7 +90,7 @@ function avatarWithPresence(user, online) {
   if (online !== undefined) {
     wrap.append(el('i', {
       class: `dot-online${online ? '' : ' off'}`,
-      title: online ? '在线' : '离线',
+      title: online ? t('在线') : t('离线'),
     }));
   }
   return wrap;
@@ -89,10 +98,10 @@ function avatarWithPresence(user, online) {
 
 function timeAgo(ts) {
   const diff = Date.now() - ts;
-  if (diff < 60_000) return '刚刚';
-  if (diff < 3600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3600_000)} 小时前`;
-  return `${Math.floor(diff / 86_400_000)} 天前`;
+  if (diff < 60_000) return t('刚刚');
+  if (diff < 3600_000) return t('{n} 分钟前', { n: Math.floor(diff / 60_000) });
+  if (diff < 86_400_000) return t('{n} 小时前', { n: Math.floor(diff / 3600_000) });
+  return t('{n} 天前', { n: Math.floor(diff / 86_400_000) });
 }
 
 function clock(ts) {
@@ -124,7 +133,7 @@ function renderOnlineNow() {
   const node = $('#onlineNow');
   node.replaceChildren(
     el('i', { class: 'dot-online' }),
-    document.createTextNode(`${state.onlineNow} 人在线`),
+    document.createTextNode(t('{n} 人在线', { n: state.onlineNow })),
   );
 }
 
@@ -133,7 +142,7 @@ function renderFilters() {
   box.replaceChildren();
   const all = el('button', {
     class: 'filter-chip', type: 'button', 'aria-pressed': String(!state.category),
-    text: '🌐 全部',
+    text: t('🌐 全部'),
     onclick: () => { state.category = ''; renderFilters(); loadBoard(); },
   });
   box.append(all);
@@ -141,7 +150,7 @@ function renderFilters() {
     box.append(el('button', {
       class: 'filter-chip', type: 'button',
       'aria-pressed': String(state.category === cat.id),
-      text: `${cat.emoji} ${cat.label}`,
+      text: `${cat.emoji} ${L(cat)}`,
       onclick: () => { state.category = cat.id; renderFilters(); loadBoard(); },
     }));
   }
@@ -164,13 +173,13 @@ function cardNode(card) {
   if (stateMeta) {
     badges.push(el('span', {
       class: `badge ${card.state}`,
-      text: `${stateMeta.emoji} ${stateMeta.label}`,
-      title: stateMeta.hint,
+      text: `${stateMeta.emoji} ${L(stateMeta)}`,
+      title: I18N.hint(stateMeta),
     }));
   }
-  if (card.locked && card.hasLockCode) badges.push(el('span', { class: 'badge lock', text: '需暗号' }));
-  if (card.isHost) badges.push(el('span', { class: 'badge mine', text: '我发起' }));
-  else if (card.isMember) badges.push(el('span', { class: 'badge mine', text: '已加入' }));
+  if (card.locked && card.hasLockCode) badges.push(el('span', { class: 'badge lock', text: t('需暗号') }));
+  if (card.isHost) badges.push(el('span', { class: 'badge mine', text: t('我发起') }));
+  else if (card.isMember) badges.push(el('span', { class: 'badge mine', text: t('已加入') }));
 
   node.append(el('div', { class: 'card-top' }, [
     el('h3', { class: 'card-title', text: card.title }),
@@ -179,7 +188,7 @@ function cardNode(card) {
 
   const opts = el('div', { class: 'card-opts' });
   for (const opt of card.options.slice(0, 6)) {
-    const chip = el('span', { class: 'opt-chip', text: `${opt.emoji} ${opt.label}` });
+    const chip = el('span', { class: 'opt-chip', text: `${opt.emoji} ${L(opt)}` });
     const n = card.tally ? card.tally[opt.id] : 0;
     if (n) chip.append(el('span', { class: 'n', text: `×${n}` }));
     opts.append(chip);
@@ -188,7 +197,7 @@ function cardNode(card) {
   node.append(opts);
 
   const meta = el('div', { class: 'card-meta' });
-  if (cat) meta.append(el('span', { text: `${cat.emoji} ${cat.label}` }));
+  if (cat) meta.append(el('span', { text: `${cat.emoji} ${L(cat)}` }));
   if (card.timeText) meta.append(el('span', { text: `🕒 ${card.timeText}` }));
   if (card.campus) meta.append(el('span', { text: `📍 ${card.campus}` }));
   if (card.messageCount) meta.append(el('span', { text: `💬 ${card.messageCount}` }));
@@ -203,12 +212,12 @@ function cardNode(card) {
   if (card.onlineCount > 0) {
     foot.append(el('span', {
       class: 'online-pill',
-      title: `${card.onlineCount} 位成员在线`,
-    }, [el('i', { class: 'dot-online' }), document.createTextNode(`${card.onlineCount} 在线`)]));
+      title: t('{n} 在线', { n: card.onlineCount }),
+    }, [el('i', { class: 'dot-online' }), document.createTextNode(t('{n} 在线', { n: card.onlineCount }))]));
   }
   foot.append(el('span', {
     class: 'seats',
-    html: `<b>${card.memberCount}</b>/${card.capacity} 人 · ${timeAgo(card.updatedAt)}`,
+    html: `<b>${card.memberCount}</b>/${card.capacity} · ${timeAgo(card.updatedAt)}`,
   }));
   node.append(foot);
   return node;
@@ -222,8 +231,8 @@ function renderFeed() {
     const filtered = state.category || state.query || state.stateFilter || state.mineOnly;
     feed.append(el('div', { class: 'feed-empty' }, [
       el('div', { class: 'big', text: filtered ? '🔍' : '🌱' }),
-      el('h3', { text: filtered ? '没有符合条件的搭子局' : '还没有人发起搭子局' }),
-      el('p', { text: filtered ? '换个分类或把筛选条件放宽试试' : '点右上角「发起搭子」，当第一个吧' }),
+      el('h3', { text: filtered ? t('没有符合条件的搭子局') : t('还没有人发起搭子局') }),
+      el('p', { text: filtered ? t('换个分类或把筛选条件放宽试试') : t('点右上角「发起搭子」，当第一个吧') }),
     ]));
     return;
   }
@@ -242,23 +251,23 @@ function renderFilterPanel() {
       onclick: () => { state.sort = sort.id; loadBoard(); },
     }, [
       el('span', { text: sort.emoji }),
-      el('span', { text: sort.label }),
+      el('span', { text: L(sort) }),
     ]));
   }
 
   const stateBox = $('#stateOptions');
   stateBox.replaceChildren();
-  const rows = [{ id: '', label: '全部', emoji: '📋' }, ...state.meta.states];
+  const rows = [{ id: '', label: '全部', labelEn: 'All', emoji: '📋' }, ...state.meta.states];
   for (const row of rows) {
     const count = row.id ? state.counts[row.id] : state.counts.all;
     stateBox.append(el('button', {
       class: 'panel-opt', type: 'button',
       'aria-pressed': String(state.stateFilter === row.id),
-      title: row.hint || '',
+      title: I18N.hint(row) || '',
       onclick: () => { state.stateFilter = row.id; loadBoard(); },
     }, [
       el('span', { text: row.emoji }),
-      el('span', { text: row.label }),
+      el('span', { text: L(row) }),
       el('span', { class: 'n', text: String(count || 0) }),
     ]));
   }
@@ -266,8 +275,8 @@ function renderFilterPanel() {
   // 按钮上直接显示当前生效的筛选，不用打开面板也能看到
   const sortMeta = state.meta.sorts.find((s) => s.id === state.sort);
   const stateMeta = state.meta.states.find((s) => s.id === state.stateFilter);
-  const label = [stateMeta && stateMeta.label, sortMeta && sortMeta.label].filter(Boolean).join(' · ');
-  $('#filterLabel').textContent = label || '筛选';
+  const label = [stateMeta && L(stateMeta), sortMeta && L(sortMeta)].filter(Boolean).join(' · ');
+  $('#filterLabel').textContent = label || t('筛选');
   $('#filterBtn').classList.toggle('active', Boolean(state.stateFilter) || state.sort !== 'active');
 }
 
@@ -315,7 +324,7 @@ function renderDetail() {
   const sub = $('#detailSub');
   sub.replaceChildren();
   sub.append(
-    `${cat ? cat.emoji + ' ' + cat.label + ' · ' : ''}由 ${post.host.nick} #${post.host.tag} 发起 · ${timeAgo(post.createdAt)}`,
+    `${cat ? L(cat) + ' · ' : ''}${t('由 {nick} 发起', { nick: `${post.host.nick} #${post.host.tag}` })} · ${timeAgo(post.createdAt)}`,
   );
 
   const body = $('#detailBody');
@@ -334,24 +343,24 @@ function renderDetail() {
 function lockedNote(post) {
   const wrap = el('div', { class: 'locked-note' }, [
     el('div', { class: 'big', text: '🔒' }),
-    el('h3', { text: '这个帖子被发起人锁上了' }),
+    el('h3', { text: t('这个帖子被发起人锁上了') }),
     el('p', {
       text: post.hasLockCode
-        ? '发起人设置了进入暗号。知道暗号的话，在下面输入就能进来一起聊。'
-        : '锁定之后只有已经加入的成员能看到内容和聊天。可以先私下问问发起人。',
+        ? t('发起人设置了进入暗号。知道暗号的话，在下面输入就能进来一起聊。')
+        : t('锁定之后只有已经加入的成员能看到内容和聊天。可以先私下问问发起人。'),
     }),
   ]);
   if (post.hasLockCode) {
-    const input = el('input', { placeholder: '输入暗号', maxlength: '24' });
+    const input = el('input', { placeholder: t('输入暗号'), maxlength: '24' });
     const btn = el('button', {
-      class: 'primary-btn', type: 'button', text: '进入',
+      class: 'primary-btn', type: 'button', text: t('进入'),
       onclick: async () => {
         try {
           await api(`/api/posts/${post.id}/join`, {
             method: 'POST',
             body: JSON.stringify({ code: input.value }),
           });
-          toast('暗号正确，欢迎加入！');
+          toast(t('暗号正确，欢迎加入！'));
           openDetail(post.id);
         } catch (err) { toast(err.message); }
       },
@@ -366,11 +375,11 @@ function detailSide(post) {
   const side = el('aside', { class: 'detail-side' });
 
   if (post.desc) {
-    side.append(el('div', { class: 'section-title', text: '说明' }));
+    side.append(el('div', { class: 'section-title', text: t('说明') }));
     side.append(el('p', { class: 'detail-desc', text: post.desc }));
   }
 
-  side.append(el('div', { class: 'section-title', text: '信息' }));
+  side.append(el('div', { class: 'section-title', text: t('信息') }));
   const dl = el('div');
   const rows = [
     ['时间', post.timeText],
@@ -379,14 +388,14 @@ function detailSide(post) {
     ['人数', `${post.memberCount} / ${post.capacity}`],
   ].filter(([, v]) => v);
   for (const [k, v] of rows) {
-    dl.append(el('dl', { class: 'kv' }, [el('dt', { text: k }), el('dd', { text: v })]));
+    dl.append(el('dl', { class: 'kv' }, [el('dt', { text: t(k) }), el('dd', { text: v })]));
   }
   side.append(dl);
 
   /* 多选项投票 */
   side.append(el('div', {
     class: 'section-title',
-    text: post.isMember ? '想一起做什么（点一下改选）' : '备选项目',
+    text: post.isMember ? t('想一起做什么（点一下改选）') : t('备选项目'),
   }));
   const votes = el('div', { class: 'vote-list' });
   const total = Math.max(1, post.memberCount);
@@ -399,8 +408,8 @@ function detailSide(post) {
     }, [
       el('i', { class: 'bar', style: { width: `${(n / total) * 100}%` } }),
       el('span', { text: opt.emoji }),
-      el('span', { text: opt.label }),
-      el('span', { class: 'count', text: `${n} 人` }),
+      el('span', { text: L(opt) }),
+      el('span', { class: 'count', text: t('{n} 人', { n }) }),
     ]);
     votes.append(row);
   }
@@ -410,7 +419,9 @@ function detailSide(post) {
   const onlineMembers = post.members.filter((m) => m.online).length;
   side.append(el('div', {
     class: 'section-title',
-    text: `成员 ${post.members.length}${onlineMembers ? ` · ${onlineMembers} 人在线` : ''}`,
+    text: onlineMembers
+      ? t('成员 {n} · {online} 人在线', { n: post.members.length, online: onlineMembers })
+      : t('成员 {n}', { n: post.members.length }),
   }));
   const members = el('div', { class: 'member-list' });
   for (const m of post.members) {
@@ -419,16 +430,16 @@ function detailSide(post) {
       avatarWithPresence(m, m.online),
       el('span', { text: m.nick }),
       el('span', { class: 'tag', text: `#${m.tag}` }),
-      m.isHost ? el('span', { class: 'role', text: '发起人' }) : null,
-      m.admin ? el('span', { class: 'badge lock', text: '管理员' }) : null,
-      m.inRoom ? el('span', { class: 'online-pill', text: '在房间里' }) : null,
-      opt ? el('span', { class: 'opt-chip', text: `${opt.emoji}${opt.label}` }) : null,
+      m.isHost ? el('span', { class: 'role', text: t('发起人') }) : null,
+      m.admin ? el('span', { class: 'badge lock', text: t('管理员') }) : null,
+      m.inRoom ? el('span', { class: 'online-pill', text: t('在房间里') }) : null,
+      opt ? el('span', { class: 'opt-chip', text: `${opt.emoji}${L(opt)}` }) : null,
     ]);
     if (post.isHost && !m.isHost) {
       row.append(el('button', {
-        class: 'ghost-btn kick', type: 'button', text: '移出',
+        class: 'ghost-btn kick', type: 'button', text: t('移出'),
         onclick: async () => {
-          if (!confirm(`把 ${m.nick} 移出这个局？`)) return;
+          if (!confirm(t('把 {nick} 移出这个局？', { nick: m.nick }))) return;
           try {
             await api(`/api/posts/${post.id}/kick`, { method: 'POST', body: JSON.stringify({ uid: m.uid }) });
             refreshDetail();
@@ -441,17 +452,17 @@ function detailSide(post) {
   side.append(members);
 
   /* 操作区 */
-  side.append(el('div', { class: 'section-title', text: '操作' }));
+  side.append(el('div', { class: 'section-title', text: t('操作') }));
   const tools = el('div', { class: 'host-tools' });
 
   if (!post.isMember && post.status !== 'done') {
     tools.append(el('button', {
-      class: 'primary-btn', type: 'button', text: '＋ 我要加入',
+      class: 'primary-btn', type: 'button', text: t('＋ 我要加入'),
       onclick: () => joinPost(post),
     }));
   } else if (post.isMember && !post.isHost) {
     tools.append(el('button', {
-      class: 'ghost-btn', type: 'button', text: '退出这个局',
+      class: 'ghost-btn', type: 'button', text: t('退出这个局'),
       onclick: async () => {
         try { await api(`/api/posts/${post.id}/leave`, { method: 'POST' }); refreshDetail(); }
         catch (err) { toast(err.message); }
@@ -462,12 +473,12 @@ function detailSide(post) {
   if (post.isHost) {
     tools.append(el('button', {
       class: 'ghost-btn', type: 'button',
-      text: post.locked ? '🔓 解锁帖子' : '🔒 锁住帖子',
+      text: post.locked ? t('🔓 解锁帖子') : t('🔒 锁住帖子'),
       onclick: () => toggleLock(post),
     }));
     tools.append(el('button', {
       class: 'ghost-btn', type: 'button',
-      text: post.status === 'done' ? '↩︎ 重新开放' : '🎉 标记完成',
+      text: post.status === 'done' ? t('↩︎ 重新开放') : t('🎉 标记完成'),
       onclick: async () => {
         try {
           await api(`/api/posts/${post.id}`, {
@@ -479,12 +490,12 @@ function detailSide(post) {
       },
     }));
     tools.append(el('button', {
-      class: 'ghost-btn danger', type: 'button', text: '删除',
+      class: 'ghost-btn danger', type: 'button', text: t('删除'),
       onclick: async () => {
-        if (!confirm('删除后聊天记录也会消失，确定？')) return;
+        if (!confirm(t('删除后聊天记录也会消失，确定？'))) return;
         try {
           await api(`/api/posts/${post.id}`, { method: 'DELETE' });
-          toast('已删除');
+          toast(t('已删除'));
           closeDetail();
         } catch (err) { toast(err.message); }
       },
@@ -496,8 +507,8 @@ function detailSide(post) {
     side.append(el('p', {
       class: 'tiny',
       text: post.hasLockCode
-        ? '当前已锁定：只有成员，或知道暗号的人才能进来。'
-        : '当前已锁定：只有已加入的成员能进来。',
+        ? t('当前已锁定：只有成员，或知道暗号的人才能进来。')
+        : t('当前已锁定：只有已加入的成员能进来。'),
     }));
   }
   return side;
@@ -522,7 +533,7 @@ async function joinPost(post, optionId) {
     });
     state.detail = data.post;
     renderDetail();
-    toast('加入成功，去聊两句吧');
+    toast(t('加入成功，去聊两句吧'));
   } catch (err) { toast(err.message); }
 }
 
@@ -530,13 +541,13 @@ async function toggleLock(post) {
   if (post.locked) {
     try {
       await api(`/api/posts/${post.id}`, { method: 'PATCH', body: JSON.stringify({ locked: false }) });
-      toast('已解锁');
+      toast(t('已解锁'));
       refreshDetail();
     } catch (err) { toast(err.message); }
     return;
   }
   const code = prompt(
-    '锁住之后，没加入的人看不到内容也进不来。\n\n可选：设一个暗号，知道暗号的人仍可进入（留空则完全不让新人进）。',
+    t('锁住之后，没加入的人看不到内容也进不来。\n\n可选：设一个暗号，知道暗号的人仍可进入（留空则完全不让新人进）。'),
     '',
   );
   if (code === null) return;
@@ -545,7 +556,7 @@ async function toggleLock(post) {
       method: 'PATCH',
       body: JSON.stringify({ locked: true, lockCode: code.trim() }),
     });
-    toast(code.trim() ? '已锁定，凭暗号可进 🔒' : '已锁定，别人进不来了 🔒');
+    toast(code.trim() ? t('已锁定，凭暗号可进 🔒') : t('已锁定，别人进不来了 🔒'));
     refreshDetail();
   } catch (err) { toast(err.message); }
 }
@@ -558,7 +569,7 @@ function chatPanel(post) {
 
   const box = el('textarea', {
     rows: '1', maxlength: String(state.meta.limits.message),
-    placeholder: post.status === 'done' && !post.isMember ? '这个局已经结束了' : '说点什么…（Enter 发送）',
+    placeholder: post.status === 'done' && !post.isMember ? t('这个局已经结束了') : t('说点什么…（Enter 发送）'),
   });
   box.addEventListener('input', () => {
     box.style.height = 'auto';
@@ -568,7 +579,7 @@ function chatPanel(post) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   });
 
-  const btn = el('button', { class: 'primary-btn', type: 'button', text: '发送', onclick: () => send() });
+  const btn = el('button', { class: 'primary-btn', type: 'button', text: t('发送'), onclick: () => send() });
 
   async function send() {
     const text = box.value.trim();
@@ -622,11 +633,11 @@ function connectBoardStream() {
 
   source.addEventListener('open', () => {
     conn.className = 'conn live';
-    conn.replaceChildren(el('i'), document.createTextNode('实时同步中'));
+    conn.replaceChildren(el('i'), document.createTextNode(t('实时同步中')));
   });
   source.addEventListener('error', () => {
     conn.className = 'conn dead';
-    conn.replaceChildren(el('i'), document.createTextNode('连接断开，正在重连…'));
+    conn.replaceChildren(el('i'), document.createTextNode(t('连接断开，正在重连…')));
   });
 
   const refresh = debounce(() => loadBoard(), 350);
@@ -656,7 +667,7 @@ function connectPostStream(postId) {
   source.addEventListener('post:update', () => refreshDetail());
   source.addEventListener('post:locked', () => refreshDetail());
   source.addEventListener('presence', debounce(() => refreshDetail(), 1200));
-  source.addEventListener('post:removed', () => { toast('发起人删除了这个帖子'); closeDetail(); });
+  source.addEventListener('post:removed', () => { toast(t('发起人删除了这个帖子')); closeDetail(); });
 }
 
 function debounce(fn, wait) {
@@ -676,7 +687,7 @@ function renderCreatePickers() {
     cats.append(el('button', {
       class: 'pick-chip', type: 'button',
       'aria-pressed': String(state.draft.category === cat.id),
-      text: `${cat.emoji} ${cat.label}`,
+      text: `${cat.emoji} ${L(cat)}`,
       onclick: () => { state.draft.category = cat.id; renderCreatePickers(); },
     }));
   }
@@ -687,11 +698,11 @@ function renderCreatePickers() {
     const on = state.draft.options.some((o) => o.label === preset.label);
     opts.append(el('button', {
       class: 'pick-chip', type: 'button', 'aria-pressed': String(on),
-      text: `${preset.emoji} ${preset.label}`,
+      text: `${preset.emoji} ${L(preset)}`,
       onclick: () => {
         if (on) state.draft.options = state.draft.options.filter((o) => o.label !== preset.label);
         else if (state.draft.options.length < state.meta.limits.optionsPerPost) state.draft.options.push({ ...preset });
-        else toast(`最多选 ${state.meta.limits.optionsPerPost} 个项目`);
+        else toast(t('最多选 {n} 个项目', { n: state.meta.limits.optionsPerPost }));
         renderCreatePickers();
       },
     }));
@@ -701,7 +712,7 @@ function renderCreatePickers() {
   picked.replaceChildren();
   for (const opt of state.draft.options) {
     picked.append(el('button', {
-      class: 'pick-chip', type: 'button', text: `${opt.emoji} ${opt.label} ✕`,
+      class: 'pick-chip', type: 'button', text: `${opt.emoji} ${L(opt)} ✕`,
       onclick: () => {
         state.draft.options = state.draft.options.filter((o) => o.label !== opt.label);
         renderCreatePickers();
@@ -722,7 +733,7 @@ async function submitCreate(e) {
   const form = e.target;
   const data = Object.fromEntries(new FormData(form).entries());
   if (state.draft.options.length === 0) {
-    $('#createErr').textContent = '至少选一个想一起做的项目';
+    $('#createErr').textContent = t('至少选一个想一起做的项目');
     return;
   }
   const btn = form.querySelector('button[type=submit]');
@@ -737,7 +748,7 @@ async function submitCreate(e) {
     $('#createOverlay').hidden = true;
     await loadBoard();
     openDetail(result.post.id);
-    toast('发布成功，等人来搭 🎉');
+    toast(t('发布成功，等人来搭 🎉'));
   } catch (err) {
     $('#createErr').textContent = err.message;
   } finally {
@@ -759,18 +770,18 @@ function renderAuthMode() {
   const isLogin = state.authMode === 'login';
   $('#tabLogin').setAttribute('aria-selected', String(isLogin));
   $('#tabRegister').setAttribute('aria-selected', String(!isLogin));
-  $('#authSubmit').textContent = isLogin ? '登录' : '注册';
+  $('#authSubmit').textContent = isLogin ? t('登录') : t('注册');
   $('#authForm').querySelector('input[name=password]')
     .setAttribute('autocomplete', isLogin ? 'current-password' : 'new-password');
 
   const rule = state.meta.usernameRule;
   $('#authSub').textContent = isLogin
-    ? '登录后可以在任何设备上找回你的帖子和身份'
-    : '注册会把账号绑定到你当前的身份上';
-  $('#authHint').textContent = isLogin
-    ? ''
-    : `用户名 ${rule.min}-${rule.max} 位，密码至少 ${rule.passwordMin} 位。`
-      + `注册不会新建一个人：你现在的昵称 ${state.me ? state.me.nick : ''}、已发的帖子和聊天记录都会保留。`;
+    ? t('登录后可以在任何设备上找回你的帖子和身份')
+    : t('注册会把账号绑定到你当前的身份上');
+  $('#authHint').textContent = isLogin ? '' : t(
+    '用户名 {min}-{max} 位，密码至少 {pmin} 位。注册不会新建一个人：你现在的昵称 {nick}、已发的帖子和聊天记录都会保留。',
+    { min: rule.min, max: rule.max, pmin: rule.passwordMin, nick: state.me ? state.me.nick : '' },
+  );
 }
 
 async function submitAuth(e) {
@@ -786,7 +797,9 @@ async function submitAuth(e) {
     form.reset();
     $('#authOverlay').hidden = true;
     renderMe();
-    toast(state.authMode === 'login' ? `欢迎回来，${result.user.nick}` : '注册成功，身份已绑定');
+    toast(state.authMode === 'login'
+      ? t('欢迎回来，{nick}', { nick: result.user.nick })
+      : t('注册成功，身份已绑定'));
     loadBoard();
   } catch (err) {
     $('#authErr').textContent = err.message;
@@ -796,27 +809,27 @@ async function submitAuth(e) {
 }
 
 async function logout() {
-  if (!confirm('退出后会回到一个全新的匿名身份，之前的帖子仍属于原账号。确定？')) return;
+  if (!confirm(t('退出后会回到一个全新的匿名身份，之前的帖子仍属于原账号。确定？'))) return;
   try {
     const result = await api('/api/auth/logout', { method: 'POST' });
     state.me = result.user;
     renderMe();
     $('#meOverlay').hidden = true;
-    toast('已退出登录');
+    toast(t('已退出登录'));
     loadBoard();
   } catch (err) { toast(err.message); }
 }
 
 async function changePassword() {
-  const oldPassword = prompt('请输入当前密码：');
+  const oldPassword = prompt(t('请输入当前密码：'));
   if (!oldPassword) return;
-  const newPassword = prompt(`请输入新密码（至少 ${state.meta.usernameRule.passwordMin} 位）：`);
+  const newPassword = prompt(t('请输入新密码（至少 {n} 位）：', { n: state.meta.usernameRule.passwordMin }));
   if (!newPassword) return;
   try {
     await api('/api/auth/password', {
       method: 'POST', body: JSON.stringify({ oldPassword, newPassword }),
     });
-    toast('密码已修改');
+    toast(t('密码已修改'));
   } catch (err) { toast(err.message); }
 }
 
@@ -827,28 +840,32 @@ function renderAccountBox() {
 
   if (state.me.username) {
     box.append(
-      el('h3', { text: `已登录：${state.me.username}${state.me.admin ? '（管理员）' : ''}` }),
-      el('p', { text: '账号和这个身份是绑定的，换设备用账号密码登录即可拿回全部内容。' }),
+      el('h3', {
+        text: state.me.admin
+          ? t('已登录：{name}（管理员）', { name: state.me.username })
+          : t('已登录：{name}', { name: state.me.username }),
+      }),
+      el('p', { text: t('账号和这个身份是绑定的，换设备用账号密码登录即可拿回全部内容。') }),
       el('div', { class: 'account-actions' }, [
-        el('button', { class: 'ghost-btn', type: 'button', text: '修改密码', onclick: changePassword }),
-        el('button', { class: 'ghost-btn danger', type: 'button', text: '退出登录', onclick: logout }),
+        el('button', { class: 'ghost-btn', type: 'button', text: t('修改密码'), onclick: changePassword }),
+        el('button', { class: 'ghost-btn danger', type: 'button', text: t('退出登录'), onclick: logout }),
       ]),
     );
   } else {
     box.append(
-      el('h3', { text: '还没有注册账号' }),
+      el('h3', { text: t('还没有注册账号') }),
       el('p', {
         text: state.meta.requireLogin
-          ? '本站已开启「登录后才能发言」，注册后才能发帖和聊天。'
-          : '不注册也能正常用。注册的好处是换设备时用账号密码就能拿回身份，比记一串口令方便。',
+          ? t('本站已开启「登录后才能发言」，注册后才能发帖和聊天。')
+          : t('不注册也能正常用。注册的好处是换设备时用账号密码就能拿回身份，比记一串口令方便。'),
       }),
       el('div', { class: 'account-actions' }, [
         el('button', {
-          class: 'primary-btn', type: 'button', text: '注册账号',
+          class: 'primary-btn', type: 'button', text: t('注册账号'),
           onclick: () => { $('#meOverlay').hidden = true; openAuth('register'); },
         }),
         el('button', {
-          class: 'ghost-btn', type: 'button', text: '已有账号，去登录',
+          class: 'ghost-btn', type: 'button', text: t('已有账号，去登录'),
           onclick: () => { $('#meOverlay').hidden = true; openAuth('login'); },
         }),
       ]),
@@ -876,10 +893,10 @@ async function refreshAdmin() {
     const s = overview.stats;
     $('#adminStats').replaceChildren(...[
       ['用户', s.users], ['已注册', s.registered], ['在线', s.online],
-      ['帖子', s.posts], ['已锁定', s.locked], ['消息', s.messages], ['封禁', s.banned],
+      ['帖子', s.posts], ['已锁定', s.locked], ['消息', s.messages], ['已封禁', s.banned],
     ].map(([label, value]) => el('div', { class: 'stat' }, [
       el('b', { text: String(value) }),
-      el('span', { text: label }),
+      el('span', { text: t(label) }),
     ])));
 
     if (isUsers) await renderAdminUsers();
@@ -893,7 +910,7 @@ async function renderAdminUsers() {
   const list = $('#adminList');
   list.replaceChildren();
   if (!data.users.length) {
-    list.append(el('div', { class: 'empty-col', text: '没有匹配的用户' }));
+    list.append(el('div', { class: 'empty-col', text: t('没有匹配的用户') }));
     return;
   }
   for (const u of data.users) {
@@ -901,17 +918,19 @@ async function renderAdminUsers() {
       avatarWithPresence(u, u.online),
       el('div', { class: 'grow' }, [
         el('b', { text: u.nick }),
-        el('small', { text: `#${u.tag}${u.username ? ` · @${u.username}` : ' · 匿名'} · ${u.posts} 帖` }),
+        el('small', {
+          text: `#${u.tag}${u.username ? ` · @${u.username}` : ` · ${t('匿名')}`} · ${t('{n} 帖', { n: u.posts })}`,
+        }),
       ]),
-      u.admin ? el('span', { class: 'badge lock', text: '管理员' }) : null,
-      u.banned ? el('span', { class: 'badge done', text: '已封禁' }) : null,
+      u.admin ? el('span', { class: 'badge lock', text: t('管理员') }) : null,
+      u.banned ? el('span', { class: 'badge done', text: t('已封禁') }) : null,
     ]);
 
     if (u.uid !== state.me.uid) {
       row.append(el('button', {
-        class: 'ghost-btn', type: 'button', text: u.banned ? '解封' : '封禁',
+        class: 'ghost-btn', type: 'button', text: u.banned ? t('解封') : t('封禁'),
         onclick: async () => {
-          if (!u.banned && !confirm(`封禁 ${u.nick}？封禁后 ta 无法发帖和发言。`)) return;
+          if (!u.banned && !confirm(t('封禁 {nick}？封禁后 ta 无法发帖和发言。', { nick: u.nick }))) return;
           try {
             await api(`/api/admin/users/${u.uid}/ban`, {
               method: 'POST', body: JSON.stringify({ banned: !u.banned }),
@@ -921,7 +940,7 @@ async function renderAdminUsers() {
         },
       }));
       row.append(el('button', {
-        class: 'ghost-btn', type: 'button', text: u.admin ? '取消管理员' : '设为管理员',
+        class: 'ghost-btn', type: 'button', text: u.admin ? t('取消管理员') : t('设为管理员'),
         onclick: async () => {
           try {
             await api(`/api/admin/users/${u.uid}/role`, {
@@ -941,7 +960,7 @@ async function renderAdminPosts() {
   const list = $('#adminList');
   list.replaceChildren();
   if (!data.posts.length) {
-    list.append(el('div', { class: 'empty-col', text: '还没有帖子' }));
+    list.append(el('div', { class: 'empty-col', text: t('还没有帖子') }));
     return;
   }
   for (const p of data.posts) {
@@ -951,13 +970,13 @@ async function renderAdminPosts() {
         el('b', { text: p.title }),
         el('small', { text: `${p.host.nick} #${p.host.tag} · ${p.memberCount} 人 · ${p.messageCount} 条消息 · ${timeAgo(p.updatedAt)}` }),
       ]),
-      stateMeta ? el('span', { class: `badge ${p.state}`, text: stateMeta.label }) : null,
+      stateMeta ? el('span', { class: `badge ${p.state}`, text: L(stateMeta) }) : null,
       el('button', {
-        class: 'ghost-btn', type: 'button', text: '查看',
+        class: 'ghost-btn', type: 'button', text: t('查看'),
         onclick: () => { $('#adminOverlay').hidden = true; openDetail(p.id); },
       }),
       el('button', {
-        class: 'ghost-btn', type: 'button', text: p.locked ? '解锁' : '锁定',
+        class: 'ghost-btn', type: 'button', text: p.locked ? t('解锁') : t('锁定'),
         onclick: async () => {
           try {
             await api(`/api/posts/${p.id}`, {
@@ -968,12 +987,12 @@ async function renderAdminPosts() {
         },
       }),
       el('button', {
-        class: 'ghost-btn danger', type: 'button', text: '删除',
+        class: 'ghost-btn danger', type: 'button', text: t('删除'),
         onclick: async () => {
-          if (!confirm(`删除「${p.title}」？聊天记录也会一起消失。`)) return;
+          if (!confirm(t('删除「{title}」？聊天记录也会一起消失。', { title: p.title }))) return;
           try {
             await api(`/api/posts/${p.id}`, { method: 'DELETE' });
-            toast('已删除');
+            toast(t('已删除'));
             refreshAdmin();
             loadBoard();
           } catch (err) { toast(err.message); }
@@ -1010,7 +1029,7 @@ function openMe() {
       avatar(draft),
       el('div', { class: 'who' }, [
         el('strong', { text: draft.nick }),
-        el('span', { text: `#${draft.tag} · 这个编号永远跟着你` }),
+        el('span', { text: `#${draft.tag} · ${t('这个编号永远跟着你')}` }),
       ]),
     );
   };
@@ -1053,8 +1072,10 @@ function openMe() {
   notifyInput.checked = state.me.notifyEmail !== false;
   const rule = state.meta.notifyRule;
   $('#notifyHint').textContent = state.meta.mailEnabled
-    ? `有人在你的帖子里待满 ${rule.dwellMinutes} 分钟、并且发过至少 ${rule.minMessages} 条消息时，给你发一封提醒邮件。每人每帖只提醒一次，邮箱不会公开给任何人。`
-    : `站点还没配置发信服务，填了也暂时收不到邮件。规则是：有人在你的帖子里待满 ${rule.dwellMinutes} 分钟且发过 ${rule.minMessages} 条以上消息就提醒你。`;
+    ? t('有人在你的帖子里待满 {min} 分钟、并且发过至少 {msg} 条消息时，给你发一封提醒邮件。每人每帖只提醒一次，邮箱不会公开给任何人。',
+      { min: rule.dwellMinutes, msg: rule.minMessages })
+    : t('站点还没配置发信服务，填了也暂时收不到邮件。规则是：有人在你的帖子里待满 {min} 分钟且发过 {msg} 条以上消息就提醒你。',
+      { min: rule.dwellMinutes, msg: rule.minMessages });
 
   $('#meForm').onsubmit = async (e) => {
     e.preventDefault();
@@ -1072,7 +1093,7 @@ function openMe() {
       state.me = data.user;
       renderMe();
       $('#meOverlay').hidden = true;
-      toast('身份已更新，全站同步');
+      toast(t('身份已更新，全站同步'));
       loadBoard();
       if (state.detail) refreshDetail();
     } catch (err) {
@@ -1088,7 +1109,7 @@ async function setupIdentity() {
   if (data.fresh && data.recoveryCode) {
     // 首次进站：把身份口令存在本地，方便用户随时查看/换设备找回。
     try { localStorage.setItem('dazi.recovery', data.recoveryCode); } catch (_) { /* 隐私模式 */ }
-    toast(`欢迎，${state.me.nick}！你的身份已自动生成`);
+    toast(t('欢迎，{nick}！你的身份已自动生成', { nick: state.me.nick }));
   }
 }
 
@@ -1104,6 +1125,11 @@ function bindUi() {
   $('#tabLogin').onclick = () => { state.authMode = 'login'; $('#authErr').textContent = ''; renderAuthMode(); };
   $('#tabRegister').onclick = () => { state.authMode = 'register'; $('#authErr').textContent = ''; renderAuthMode(); };
 
+  $('#langBtn').onclick = () => {
+    I18N.set(I18N.get() === 'zh' ? 'en' : 'zh');
+    applyLanguage();
+  };
+
   $('#adminBtn').onclick = openAdmin;
   $('#tabUsers').onclick = () => { state.adminTab = 'users'; refreshAdmin(); };
   $('#tabPosts').onclick = () => { state.adminTab = 'posts'; refreshAdmin(); };
@@ -1115,7 +1141,7 @@ function bindUi() {
     const input = $('#customOpt');
     const label = input.value.trim();
     if (!label) return;
-    if (state.draft.options.length >= state.meta.limits.optionsPerPost) return toast('选项已满');
+    if (state.draft.options.length >= state.meta.limits.optionsPerPost) return toast(t('选项已满'));
     if (!state.draft.options.some((o) => o.label === label)) state.draft.options.push({ label, emoji: '✨' });
     input.value = '';
     renderCreatePickers();
@@ -1146,23 +1172,23 @@ function bindUi() {
   }, 280));
 
   $('#showRecovery').onclick = async () => {
-    if (!confirm('生成新口令后，旧口令立即失效。继续？')) return;
+    if (!confirm(t('生成新口令后，旧口令立即失效。继续？'))) return;
     try {
       const data = await api('/api/me/recovery', { method: 'POST' });
       $('#recoveryCode').textContent = data.recoveryCode;
       try { localStorage.setItem('dazi.recovery', data.recoveryCode); } catch (_) { /* ignore */ }
-      toast('请把这串口令记下来');
+      toast(t('请把这串口令记下来'));
     } catch (err) { toast(err.message); }
   };
 
   $('#restoreBtn').onclick = async () => {
-    const code = prompt('粘贴你在另一台设备上的身份口令：');
+    const code = prompt(t('粘贴你在另一台设备上的身份口令：'));
     if (!code) return;
     try {
       const data = await api('/api/session/restore', { method: 'POST', body: JSON.stringify({ code }) });
       state.me = data.user;
       renderMe();
-      toast(`欢迎回来，${data.user.nick}`);
+      toast(t('欢迎回来，{nick}', { nick: data.user.nick }));
       $('#meOverlay').hidden = true;
       loadBoard();
     } catch (err) { toast(err.message); }
@@ -1189,11 +1215,28 @@ function bindUi() {
   } catch (_) { /* ignore */ }
 }
 
+/** 切换语言后把静态文案和所有动态渲染的部分都刷一遍。 */
+function applyLanguage() {
+  I18N.applyStatic();
+  document.title = t('校园搭子*莫纳什 · 找到一起干的人');
+  $('#langBtn').textContent = I18N.get() === 'zh' ? '中 / EN' : 'EN / 中';
+  renderFilters();
+  renderFeed();
+  renderFilterPanel();
+  renderOnlineNow();
+  renderMe();
+  renderCreatePickers();
+  if (state.detail) renderDetail();
+  if (!$('#authOverlay').hidden) renderAuthMode();
+  if (!$('#adminOverlay').hidden) refreshAdmin();
+}
+
 async function main() {
   try {
     state.meta = await api('/api/meta');
     await setupIdentity();
     bindUi();
+    applyLanguage();
     renderFilters();
     await loadBoard();
     connectBoardStream();
@@ -1205,7 +1248,7 @@ async function main() {
   } catch (err) {
     document.body.append(el('div', { class: 'locked-note' }, [
       el('div', { class: 'big', text: '😵' }),
-      el('h3', { text: '加载失败' }),
+      el('h3', { text: t('加载失败') }),
       el('p', { text: err.message }),
     ]));
   }

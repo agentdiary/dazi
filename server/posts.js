@@ -10,14 +10,14 @@ const { LIMITS } = require('./config');
 
 /** 看板分类：卡片的一级归属，同时用作筛选。 */
 const CATEGORIES = [
-  { id: 'ball', label: '球类运动', emoji: '🏀' },
-  { id: 'movie', label: '看电影', emoji: '🎬' },
-  { id: 'food', label: '搭饭', emoji: '🍜' },
-  { id: 'study', label: '自习考研', emoji: '📚' },
-  { id: 'game', label: '游戏桌游', emoji: '🎮' },
-  { id: 'trip', label: '出行旅游', emoji: '🚄' },
-  { id: 'fitness', label: '健身跑步', emoji: '🏃' },
-  { id: 'other', label: '其他', emoji: '✨' },
+  { id: 'ball', label: '球类运动', emoji: '🏀', labelEn: 'Sports' },
+  { id: 'movie', label: '看电影', emoji: '🎬', labelEn: 'Movies' },
+  { id: 'food', label: '搭饭', emoji: '🍜', labelEn: 'Food' },
+  { id: 'study', label: '自习考研', emoji: '📚', labelEn: 'Study' },
+  { id: 'game', label: '游戏桌游', emoji: '🎮', labelEn: 'Games' },
+  { id: 'trip', label: '出行旅游', emoji: '🚄', labelEn: 'Travel' },
+  { id: 'fitness', label: '健身跑步', emoji: '🏃', labelEn: 'Fitness' },
+  { id: 'other', label: '其他', emoji: '✨', labelEn: 'Other' },
 ];
 
 /**
@@ -25,35 +25,35 @@ const CATEGORIES = [
  * 它是卡片上的徽标 + 筛选项，不再是版面结构——帖子多少不该由状态决定占多大地方。
  */
 const STATES = [
-  { id: 'open', label: '招募中', emoji: '🌱', hint: '还有空位，随时可以进' },
-  { id: 'filling', label: '快满了', emoji: '🔥', hint: '名额过六成，手慢无' },
-  { id: 'locked', label: '已锁定', emoji: '🔒', hint: '发起人已锁帖，仅成员可进' },
-  { id: 'done', label: '已完成', emoji: '🎉', hint: '活动已结束/已成行' },
+  { id: 'open', label: '招募中', emoji: '🌱', hint: '还有空位，随时可以进', labelEn: 'Recruiting', hintEn: 'Spots still open, jump in anytime' },
+  { id: 'filling', label: '快满了', emoji: '🔥', hint: '名额过六成，手慢无', labelEn: 'Filling up', hintEn: 'Over 60% full, act fast' },
+  { id: 'locked', label: '已锁定', emoji: '🔒', hint: '发起人已锁帖，仅成员可进', labelEn: 'Locked', hintEn: 'Organiser locked it; members only' },
+  { id: 'done', label: '已完成', emoji: '🎉', hint: '活动已结束/已成行', labelEn: 'Finished', hintEn: 'The meetup has happened or ended' },
 ];
 
 /** 排序方式。默认按最近活跃，让还在聊的局浮上来。 */
 const SORTS = [
-  { id: 'active', label: '最近活跃', emoji: '⚡' },
-  { id: 'new', label: '最新发布', emoji: '🆕' },
-  { id: 'seats', label: '空位最多', emoji: '🪑' },
-  { id: 'people', label: '人气最高', emoji: '👥' },
-  { id: 'state', label: '按招募状态', emoji: '🚦' },
+  { id: 'active', label: '最近活跃', emoji: '⚡', labelEn: 'Recently active' },
+  { id: 'new', label: '最新发布', emoji: '🆕', labelEn: 'Newest' },
+  { id: 'seats', label: '空位最多', emoji: '🪑', labelEn: 'Most spots left' },
+  { id: 'people', label: '人气最高', emoji: '👥', labelEn: 'Most popular' },
+  { id: 'state', label: '按招募状态', emoji: '🚦', labelEn: 'By status' },
 ];
 
 /** 发帖时可勾选的备选项目，帖子内可多选，报名的人再从中挑自己想去的。 */
 const PRESET_OPTIONS = [
-  { label: '篮球', emoji: '🏀' }, { label: '羽毛球', emoji: '🏸' },
-  { label: '乒乓球', emoji: '🏓' }, { label: '足球', emoji: '⚽' },
-  { label: '网球', emoji: '🎾' }, { label: '看电影', emoji: '🎬' },
-  { label: '密室逃脱', emoji: '🔦' }, { label: '剧本杀', emoji: '🕵️' },
-  { label: '火锅', emoji: '🍲' }, { label: '烧烤', emoji: '🍢' },
-  { label: '奶茶', emoji: '🧋' }, { label: '食堂拼饭', emoji: '🍚' },
-  { label: '图书馆自习', emoji: '📚' }, { label: '考研自习', emoji: '✏️' },
-  { label: '夜跑', emoji: '🌙' }, { label: '健身房', emoji: '💪' },
-  { label: '爬山', emoji: '⛰️' }, { label: '骑行', emoji: '🚴' },
-  { label: 'KTV', emoji: '🎤' }, { label: '桌游', emoji: '🎲' },
-  { label: '开黑', emoji: '🎮' }, { label: '逛街', emoji: '🛍️' },
-  { label: '拍照', emoji: '📷' }, { label: '周边游', emoji: '🚄' },
+  { label: '篮球', labelEn: 'Basketball', emoji: '🏀' }, { label: '羽毛球', labelEn: 'Badminton', emoji: '🏸' },
+  { label: '乒乓球', labelEn: 'Table tennis', emoji: '🏓' }, { label: '足球', labelEn: 'Football', emoji: '⚽' },
+  { label: '网球', labelEn: 'Tennis', emoji: '🎾' }, { label: '看电影', labelEn: 'Movie', emoji: '🎬' },
+  { label: '密室逃脱', labelEn: 'Escape room', emoji: '🔦' }, { label: '剧本杀', labelEn: 'Murder mystery', emoji: '🕵️' },
+  { label: '火锅', labelEn: 'Hot pot', emoji: '🍲' }, { label: '烧烤', labelEn: 'BBQ', emoji: '🍢' },
+  { label: '奶茶', labelEn: 'Bubble tea', emoji: '🧋' }, { label: '食堂拼饭', labelEn: 'Dining hall', emoji: '🍚' },
+  { label: '图书馆自习', labelEn: 'Library study', emoji: '📚' }, { label: '考研自习', labelEn: 'Exam prep', emoji: '✏️' },
+  { label: '夜跑', labelEn: 'Night run', emoji: '🌙' }, { label: '健身房', labelEn: 'Gym', emoji: '💪' },
+  { label: '爬山', labelEn: 'Hiking', emoji: '⛰️' }, { label: '骑行', labelEn: 'Cycling', emoji: '🚴' },
+  { label: 'KTV', labelEn: 'Karaoke', emoji: '🎤' }, { label: '桌游', labelEn: 'Board games', emoji: '🎲' },
+  { label: '开黑', labelEn: 'Gaming', emoji: '🎮' }, { label: '逛街', labelEn: 'Shopping', emoji: '🛍️' },
+  { label: '拍照', labelEn: 'Photo walk', emoji: '📷' }, { label: '周边游', labelEn: 'Day trip', emoji: '🚄' },
 ];
 
 function newId() {
@@ -130,6 +130,19 @@ function optionTally(post) {
   return tally;
 }
 
+/**
+ * 帖子里存的选项只留了中文 label（发帖那一刻用户选的），
+ * 序列化时按预设表补回英文名，这样英文界面下也能正确显示；
+ * 用户自定义的项目没有对应翻译，原样返回即可。
+ */
+function serializeOptions(post) {
+  return post.options.map((opt) => {
+    if (opt.labelEn) return opt;
+    const preset = PRESET_OPTIONS.find((p) => p.label === opt.label);
+    return preset ? { ...opt, labelEn: preset.labelEn } : opt;
+  });
+}
+
 function serializeMember(post, uid) {
   const user = store.data().users[uid];
   return {
@@ -175,7 +188,7 @@ function serializeCard(post, viewerUid) {
     onlineCount: onlineMembers.length,
     inRoomCount: entered ? inRoom.length : 0,
     hostOnline: presence.isOnline(post.hostId),
-    options: post.options,
+    options: serializeOptions(post),
     tally: entered ? optionTally(post) : null,
     locked: post.locked,
     hasLockCode: Boolean(post.lockCodeHash),
@@ -227,6 +240,7 @@ module.exports = {
   newId,
   clampText,
   memberCount,
+  serializeOptions,
   stateOf,
   comparator,
   isHost,
