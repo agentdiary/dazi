@@ -51,11 +51,28 @@ fi
 # 用法：sudo DAZI_DUCKDNS_DOMAIN=campus-dazi DAZI_DUCKDNS_TOKEN=xxx bash deploy/install.sh
 setup_duckdns() {
   local sub="${DAZI_DUCKDNS_DOMAIN%%.duckdns.org}"
+
+  # 先挡住「把示例里的占位符原样粘贴进来」这种最常见的情况，
+  # 否则要等 DuckDNS 回一个光秃秃的 KO 才知道哪里错了。
+  if [[ ! "$sub" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,62}$ ]]; then
+    die "DuckDNS 子域名「${sub}」不合法：只能用英文字母、数字和连字符。
+     看起来你把示例里的占位符直接粘贴进来了。请先去 https://www.duckdns.org
+     用 GitHub 登录，自己起一个名字（比如 campus-dazi）并复制页面顶部的 token，
+     然后把 DAZI_DUCKDNS_DOMAIN 和 DAZI_DUCKDNS_TOKEN 换成真实值再运行。
+     不想现在弄域名的话，把这两个变量去掉即可，会用免费的 sslip.io。"
+  fi
+  if [[ ! "${DAZI_DUCKDNS_TOKEN}" =~ ^[A-Za-z0-9-]{8,}$ ]]; then
+    die "DuckDNS token 看起来不是真实值（应该是一串 UUID，形如 a1b2c3d4-....）。
+     请到 https://www.duckdns.org 页面顶部复制你的 token。"
+  fi
+
   log "向 DuckDNS 注册 ${sub}.duckdns.org → ${PUBLIC_IP}"
   local answer
   answer="$(curl -fsS --max-time 20 \
     "https://www.duckdns.org/update?domains=${sub}&token=${DAZI_DUCKDNS_TOKEN}&ip=${PUBLIC_IP}" || echo FAIL)"
-  [[ "$answer" == OK ]] || die "DuckDNS 更新失败（返回：${answer}）。检查子域名和 token 是否正确。"
+  [[ "$answer" == OK ]] || die "DuckDNS 更新失败（返回：${answer}）。
+     KO 一般意味着：token 不对，或者这个子域名不在你的账号名下（被别人占了）。
+     去 https://www.duckdns.org 确认后重试。"
 
   # IP 变了要能自动跟上，挂个定时任务每 30 分钟刷一次
   cat > /etc/cron.d/${APP_NAME}-duckdns <<CRON
@@ -206,6 +223,13 @@ fi
 ENV_FILE=/etc/${APP_NAME}.env
 SCHEME=https
 [[ "${DAZI_SKIP_TLS:-0}" == "1" ]] && SCHEME=http
+
+if [[ -n "${DAZI_SMTP_USER:-}" && ! "${DAZI_SMTP_USER}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+  die "DAZI_SMTP_USER「${DAZI_SMTP_USER}」不是一个合法邮箱地址。
+     看起来是示例里的占位符。QQ 邮箱请填完整地址（如 123456@qq.com），
+     密码填「SMTP 授权码」而不是登录密码：QQ邮箱 → 设置 → 账户 → 开启 SMTP → 生成授权码。
+     暂时不配邮件提醒的话，把 DAZI_SMTP_* 几个变量都去掉即可。"
+fi
 
 log "写入环境文件 ${ENV_FILE}"
 if [[ -f "$ENV_FILE" && -z "${DAZI_SMTP_HOST:-}" ]]; then

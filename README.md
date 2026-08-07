@@ -172,8 +172,14 @@ sudo bash deploy/install.sh
 起一个子域名并复制 token，然后：
 
 ```bash
-sudo DAZI_DUCKDNS_DOMAIN=campus-dazi DAZI_DUCKDNS_TOKEN=你的token bash deploy/install.sh
+# campus-dazi 换成你自己起的名字，token 换成 duckdns.org 页面顶部那一串 UUID
+sudo DAZI_DUCKDNS_DOMAIN=campus-dazi \
+     DAZI_DUCKDNS_TOKEN=a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+     bash deploy/install.sh
 ```
+
+> 这两个值必须是**真实值**。直接把示例里的中文占位符粘上去，DuckDNS 只会回一个 `KO`，
+> 所以脚本会先做格式校验并告诉你该去哪儿拿。
 
 脚本会注册 `campus-dazi.duckdns.org → 你的 IP`，并装一个每 30 分钟刷新的定时任务，
 换 IP 也能自动跟上。
@@ -201,11 +207,11 @@ sudo DAZI_DOMAIN=dazi.example.com bash deploy/install.sh
 邮箱设置 → 账户 → 开启 SMTP 服务 → 生成授权码。
 
 ```bash
-sudo DAZI_DOMAIN=... \
-     DAZI_SMTP_HOST=smtp.qq.com \
+# 下面的地址和授权码换成你自己的
+sudo DAZI_SMTP_HOST=smtp.qq.com \
      DAZI_SMTP_PORT=465 \
-     DAZI_SMTP_USER=你的QQ号@qq.com \
-     DAZI_SMTP_PASS=授权码 \
+     DAZI_SMTP_USER=123456@qq.com \
+     DAZI_SMTP_PASS=你生成的16位授权码 \
      bash deploy/install.sh
 ```
 
