@@ -175,10 +175,20 @@ button, input, textarea, select { font: inherit; color: inherit; }
 }
 .topbar-tools { order: 2; }
 
-/* 工具区在 1100px 以下会换行，此时让语言按钮紧跟品牌，留在第一行右端 */
-@media (max-width: 1060px) {
-  .lang-btn { order: 1; margin-left: auto; }
-}
+/*
+ * 语言按钮永远待在「校园搭子*莫纳什」那一行的右端。
+ * 换行点取决于工具区的文字宽度——中英文标签不一样长，字体和缩放也会变，
+ * 所以不能写死断点：由 syncTopbarLayout() 实测是否换行后加这个 class。
+ */
+body.topbar-wrapped .lang-btn { order: 1; margin-left: auto; }
+
+/*
+ * 测量用的临时状态：禁止换行、禁止伸缩，这样 scrollWidth 就是「一行摆开
+ * 需要多宽」的真实值，与当前排列顺序无关，判断结果不会来回抖动。
+ */
+.topbar.measuring { flex-wrap: nowrap; }
+.topbar.measuring .brand,
+.topbar.measuring .topbar-tools { flex: 0 0 auto; }
 
 /* 品牌名后面的学校后缀 */
 .brand-suffix {

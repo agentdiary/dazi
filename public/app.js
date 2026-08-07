@@ -1213,6 +1213,48 @@ function bindUi() {
     const saved = localStorage.getItem('dazi.recovery');
     if (saved) $('#recoveryCode').textContent = saved;
   } catch (_) { /* ignore */ }
+
+  // 顶栏尺寸一变就重新判断（缩放、旋转屏幕、登录后多出按钮都会触发）
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => syncTopbarLayout()).observe($('.topbar'));
+  } else {
+    window.addEventListener('resize', syncTopbarLayout);
+  }
+}
+
+/**
+ * 语言按钮要始终待在品牌那一行的右端。
+ *
+ * 顶栏一行放不下时会换行，而换行点取决于工具区的文字宽度——中英文标签
+ * 不一样长，字体、缩放、登录后多出的按钮都会挪动它，写死断点治不了。
+ *
+ * 判据必须与「按钮当前排在哪」无关，否则会抖动：把按钮挪回第一行后，
+ * 「按钮掉行了吗」立刻变成否，于是又挪回去，来回横跳。
+ * 所以这里量的是「一行摆开需要多宽」——加一个临时 class 关掉换行和伸缩，
+ * 读 scrollWidth，它只取决于内容总宽度。
+ */
+function syncTopbarLayout() {
+  const bar = $('.topbar');
+  const brand = $('.brand');
+  const tools = $('.topbar-tools');
+  const lang = $('#langBtn');
+  if (!bar || !brand || !tools || !lang) return;
+
+  // 关掉换行和伸缩，量出三块内容各自的自然宽度。
+  // 不用 scrollWidth：内容没超宽时它等于 clientWidth，看不出实际占了多少。
+  bar.classList.add('measuring');
+  const styles = getComputedStyle(bar);
+  const gap = parseFloat(styles.columnGap) || 0;
+  const padding = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
+  const needed = brand.getBoundingClientRect().width
+    + tools.getBoundingClientRect().width
+    + lang.getBoundingClientRect().width
+    + gap * 2 + padding;
+  bar.classList.remove('measuring');
+
+  // 留 2px 余量，避免卡在边界上时判断和实际布局差半个像素
+  const fitsOneLine = needed <= bar.getBoundingClientRect().width - 2;
+  document.body.classList.toggle('topbar-wrapped', !fitsOneLine);
 }
 
 /** 切换语言后把静态文案和所有动态渲染的部分都刷一遍。 */
@@ -1229,6 +1271,8 @@ function applyLanguage() {
   if (state.detail) renderDetail();
   if (!$('#authOverlay').hidden) renderAuthMode();
   if (!$('#adminOverlay').hidden) refreshAdmin();
+  // 英文标签更长，切完语言顶栏的换行情况可能就变了
+  syncTopbarLayout();
 }
 
 async function main() {
