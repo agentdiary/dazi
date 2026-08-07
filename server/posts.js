@@ -5,6 +5,7 @@
 const crypto = require('crypto');
 const store = require('./store');
 const identity = require('./identity');
+const presence = require('./presence');
 const { LIMITS } = require('./config');
 
 /** 看板分类：卡片的一级归属，同时用作筛选。 */
@@ -19,12 +20,24 @@ const CATEGORIES = [
   { id: 'other', label: '其他', emoji: '✨' },
 ];
 
-/** 看板的四个泳道。locked / done 由发起人控制，open / filling 自动计算。 */
-const COLUMNS = [
-  { id: 'open', label: '招募中', emoji: '🌱', hint: '刚发起，等人来搭' },
-  { id: 'filling', label: '快满了', emoji: '🔥', hint: '名额过半，手慢无' },
+/**
+ * 招募状态。locked / done 由发起人控制，open / filling 按人数自动计算。
+ * 它是卡片上的徽标 + 筛选项，不再是版面结构——帖子多少不该由状态决定占多大地方。
+ */
+const STATES = [
+  { id: 'open', label: '招募中', emoji: '🌱', hint: '还有空位，随时可以进' },
+  { id: 'filling', label: '快满了', emoji: '🔥', hint: '名额过六成，手慢无' },
   { id: 'locked', label: '已锁定', emoji: '🔒', hint: '发起人已锁帖，仅成员可进' },
   { id: 'done', label: '已完成', emoji: '🎉', hint: '活动已结束/已成行' },
+];
+
+/** 排序方式。默认按最近活跃，让还在聊的局浮上来。 */
+const SORTS = [
+  { id: 'active', label: '最近活跃', emoji: '⚡' },
+  { id: 'new', label: '最新发布', emoji: '🆕' },
+  { id: 'seats', label: '空位最多', emoji: '🪑' },
+  { id: 'people', label: '人气最高', emoji: '👥' },
+  { id: 'state', label: '按招募状态', emoji: '🚦' },
 ];
 
 /** 发帖时可勾选的备选项目，帖子内可多选，报名的人再从中挑自己想去的。 */
@@ -57,13 +70,33 @@ function memberCount(post) {
   return Object.keys(post.members).length;
 }
 
-/** 帖子当前所在的看板泳道。 */
-function columnOf(post) {
+/** 帖子当前的招募状态。 */
+function stateOf(post) {
   if (post.status === 'done') return 'done';
   if (post.locked) return 'locked';
   const count = memberCount(post);
   if (post.capacity > 0 && count >= Math.ceil(post.capacity * 0.6)) return 'filling';
   return 'open';
+}
+
+const STATE_ORDER = { open: 0, filling: 1, locked: 2, done: 3 };
+
+/** 排序比较器。空位/人气这类相同时，一律回落到最近活跃，保证顺序稳定。 */
+function comparator(sort) {
+  const byActive = (a, b) => b.updatedAt - a.updatedAt;
+  switch (sort) {
+    case 'new':
+      return (a, b) => b.createdAt - a.createdAt || byActive(a, b);
+    case 'seats':
+      return (a, b) => (b.capacity - b.memberCount) - (a.capacity - a.memberCount) || byActive(a, b);
+    case 'people':
+      return (a, b) => b.memberCount - a.memberCount || byActive(a, b);
+    case 'state':
+      return (a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state] || byActive(a, b);
+    case 'active':
+    default:
+      return byActive;
+  }
 }
 
 function isHost(post, uid) {
@@ -104,6 +137,8 @@ function serializeMember(post, uid) {
     optionId: post.members[uid].optionId,
     joinedAt: post.members[uid].joinedAt,
     isHost: post.hostId === uid,
+    online: presence.isOnline(uid),
+    inRoom: presence.whoIsInRoom(post.id).includes(uid),
   };
 }
 
@@ -125,6 +160,8 @@ function serializeMessage(msg) {
 function serializeCard(post, viewerUid) {
   const entered = canEnter(post, viewerUid);
   const host = store.data().users[post.hostId];
+  const inRoom = presence.whoIsInRoom(post.id);
+  const onlineMembers = Object.keys(post.members).filter((uid) => presence.isOnline(uid));
   return {
     id: post.id,
     title: post.title,
@@ -135,12 +172,15 @@ function serializeCard(post, viewerUid) {
     timeText: post.timeText,
     capacity: post.capacity,
     memberCount: memberCount(post),
+    onlineCount: onlineMembers.length,
+    inRoomCount: entered ? inRoom.length : 0,
+    hostOnline: presence.isOnline(post.hostId),
     options: post.options,
     tally: entered ? optionTally(post) : null,
     locked: post.locked,
     hasLockCode: Boolean(post.lockCodeHash),
     status: post.status,
-    column: columnOf(post),
+    state: stateOf(post),
     host: identity.publicUser(host),
     isHost: isHost(post, viewerUid),
     isMember: isMember(post, viewerUid),
@@ -181,12 +221,14 @@ function trimMessages(post) {
 
 module.exports = {
   CATEGORIES,
-  COLUMNS,
+  STATES,
+  SORTS,
   PRESET_OPTIONS,
   newId,
   clampText,
   memberCount,
-  columnOf,
+  stateOf,
+  comparator,
   isHost,
   isMember,
   canEnter,

@@ -44,10 +44,42 @@ detect_ip() {
 PUBLIC_IP="${DAZI_IP:-$(detect_ip)}"
 if [[ "$PUBLIC_IP" =~ ^(10\.|127\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.) && -z "${DAZI_DOMAIN:-}" ]]; then
   warn "探测到的 ${PUBLIC_IP} 是内网地址，用它拼出来的免费域名在公网上解析不到。"
-  warn "请改用：sudo DAZI_DOMAIN=${APP_NAME}.<你的公网IP>.sslip.io bash deploy/install.sh"
+  warn "请改用：sudo DAZI_DOMAIN=<你的域名> bash deploy/install.sh"
 fi
-DOMAIN="${DAZI_DOMAIN:-${APP_NAME}.${PUBLIC_IP}.sslip.io}"
+
+# DuckDNS：免费二级域名，URL 里不出现 IP。
+# 用法：sudo DAZI_DUCKDNS_DOMAIN=campus-dazi DAZI_DUCKDNS_TOKEN=xxx bash deploy/install.sh
+setup_duckdns() {
+  local sub="${DAZI_DUCKDNS_DOMAIN%%.duckdns.org}"
+  log "向 DuckDNS 注册 ${sub}.duckdns.org → ${PUBLIC_IP}"
+  local answer
+  answer="$(curl -fsS --max-time 20 \
+    "https://www.duckdns.org/update?domains=${sub}&token=${DAZI_DUCKDNS_TOKEN}&ip=${PUBLIC_IP}" || echo FAIL)"
+  [[ "$answer" == OK ]] || die "DuckDNS 更新失败（返回：${answer}）。检查子域名和 token 是否正确。"
+
+  # IP 变了要能自动跟上，挂个定时任务每 30 分钟刷一次
+  cat > /etc/cron.d/${APP_NAME}-duckdns <<CRON
+# 校园搭子：保持 DuckDNS 记录指向当前公网 IP
+*/30 * * * * root curl -fsS "https://www.duckdns.org/update?domains=${sub}&token=${DAZI_DUCKDNS_TOKEN}&ip=" >/dev/null 2>&1
+CRON
+  chmod 600 /etc/cron.d/${APP_NAME}-duckdns
+  echo "${sub}.duckdns.org"
+}
+
+if [[ -n "${DAZI_DUCKDNS_DOMAIN:-}" && -n "${DAZI_DUCKDNS_TOKEN:-}" ]]; then
+  DOMAIN="$(setup_duckdns)"
+else
+  DOMAIN="${DAZI_DOMAIN:-${APP_NAME}.${PUBLIC_IP}.sslip.io}"
+fi
 EMAIL="${DAZI_EMAIL:-admin@${DOMAIN}}"
+
+if [[ "$DOMAIN" == *.sslip.io || "$DOMAIN" == *.nip.io ]]; then
+  warn "当前域名把服务器 IP 直接写在了 URL 里（${DOMAIN}）。"
+  warn "想让 URL 里不出现 IP，可以用免费的 DuckDNS："
+  warn "  sudo DAZI_DUCKDNS_DOMAIN=<你起的名字> DAZI_DUCKDNS_TOKEN=<token> bash deploy/install.sh"
+  warn "注意：换域名只是让 URL 不带 IP，dig 一下仍能查到解析目标。"
+  warn "要彻底隐藏源站 IP，需要在前面套一层 Cloudflare 代理，详见 README。"
+fi
 
 # 端口：已经部署过就沿用原端口（避免重复部署时端口漂移），
 # 否则挑一个没被占用的，避免和服务器上已有的服务撞车。
@@ -170,6 +202,36 @@ fi
 
 # ---------------------------------------------------------------- systemd
 
+# 站点地址 + SMTP 凭据单独放一个 600 的环境文件，不写进 systemd unit（unit 是所有人可读的）
+ENV_FILE=/etc/${APP_NAME}.env
+SCHEME=https
+[[ "${DAZI_SKIP_TLS:-0}" == "1" ]] && SCHEME=http
+
+log "写入环境文件 ${ENV_FILE}"
+if [[ -f "$ENV_FILE" && -z "${DAZI_SMTP_HOST:-}" ]]; then
+  # 重复部署且这次没给 SMTP 参数：保留上次配好的，只更新站点地址
+  sed -i "/^DAZI_SITE_URL=/d" "$ENV_FILE"
+  echo "DAZI_SITE_URL=${SCHEME}://${DOMAIN}" >> "$ENV_FILE"
+else
+  {
+    echo "DAZI_SITE_URL=${SCHEME}://${DOMAIN}"
+    [[ -n "${DAZI_SMTP_HOST:-}" ]]      && echo "DAZI_SMTP_HOST=${DAZI_SMTP_HOST}"
+    [[ -n "${DAZI_SMTP_PORT:-}" ]]      && echo "DAZI_SMTP_PORT=${DAZI_SMTP_PORT}"
+    [[ -n "${DAZI_SMTP_USER:-}" ]]      && echo "DAZI_SMTP_USER=${DAZI_SMTP_USER}"
+    [[ -n "${DAZI_SMTP_PASS:-}" ]]      && echo "DAZI_SMTP_PASS=${DAZI_SMTP_PASS}"
+    [[ -n "${DAZI_SMTP_FROM:-}" ]]      && echo "DAZI_SMTP_FROM=${DAZI_SMTP_FROM}"
+    [[ -n "${DAZI_SMTP_FROM_NAME:-}" ]] && echo "DAZI_SMTP_FROM_NAME=${DAZI_SMTP_FROM_NAME}"
+    [[ -n "${DAZI_SMTP_SECURE:-}" ]]    && echo "DAZI_SMTP_SECURE=${DAZI_SMTP_SECURE}"
+    true
+  } > "$ENV_FILE"
+fi
+chmod 600 "$ENV_FILE"
+if grep -q '^DAZI_SMTP_HOST=' "$ENV_FILE"; then
+  log "邮件提醒：已配置 $(sed -n 's/^DAZI_SMTP_HOST=//p' "$ENV_FILE")"
+else
+  log "邮件提醒：未配置 SMTP（站内提醒照常工作）"
+fi
+
 log "写入 systemd 服务"
 cat > /etc/systemd/system/${APP_NAME}.service <<UNIT
 [Unit]
@@ -186,6 +248,7 @@ Environment=NODE_ENV=production
 Environment=DAZI_HOST=127.0.0.1
 Environment=DAZI_PORT=${PORT}
 Environment=DAZI_DATA_DIR=${DATA_DIR}
+EnvironmentFile=-${ENV_FILE}
 ExecStart=${NODE_BIN} ${APP_DIR}/server/index.js
 Restart=always
 RestartSec=3

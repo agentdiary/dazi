@@ -1,10 +1,11 @@
 # 校园搭子 · dazi
 
-> 一张看板，找到一起干的人。
+> 一张卡片，找到一起干的人。
 
-看板（Kanban）风格的校园「搭子」社交网站：把每一个「求搭子」的局做成一张卡片，
-在四条泳道之间流动；卡片里可以放**多个备选项目**（篮球 / 羽毛球 / 看电影 / 火锅 / 自习…），
-报名的人各自投自己想去的那个；每张卡片内部自带**聊天室**；发起人可以随时**把帖子锁住，不让别人进来**。
+校园「搭子」社交网站：把每一个「求搭子」的局做成一张卡片铺在首页，
+分类栏可以左右滑动、右端可按状态/人数/时间筛选排序；卡片里能放**多个备选项目**
+（篮球 / 羽毛球 / 看电影 / 火锅 / 自习…），报名的人各自投自己想去的那个；
+每张卡片内部自带**聊天室**并显示谁在线；发起人可以随时**把帖子锁住，不让别人进来**。
 
 **免注册、免密码**——打开就能发言，但身份由服务器签发并全站保持统一。
 
@@ -12,19 +13,50 @@
 
 ## 功能
 
-### 看板
+### 以帖子为主的首页
 
-四条泳道，卡片自动流动，发起人可以直接拖动自己的卡片改状态：
+主体是自适应平铺的帖子卡片，帖子多少都能把版面填满。
+分类栏（全部 / 球类运动 / 看电影 / 搭饭 / 自习考研 / 游戏桌游 / 出行 / 健身 / 其他）
+可以左右滑动，右端是筛选按钮：
 
-| 泳道 | 含义 | 谁能移动 |
+- **排序**：最近活跃（默认）/ 最新发布 / 空位最多 / 人气最高 / 按招募状态
+- **招募状态筛选**：全部 / 招募中 / 快满了 / 已锁定 / 已完成，每项带数量
+
+按钮上会直接显示当前生效的条件（如「招募中 · 空位最多」），不用展开就知道自己筛了什么。
+
+招募状态是卡片上的**徽标**，不是版面分栏：
+
+| 状态 | 含义 | 谁能改 |
 | --- | --- | --- |
-| 🌱 招募中 | 刚发起，等人来搭 | 自动 / 发起人拖回 |
-| 🔥 快满了 | 名额过 60%，手慢无 | 自动计算，不能手动拖入 |
+| 🌱 招募中 | 还有空位 | 自动 |
+| 🔥 快满了 | 名额过 60% | 自动计算 |
 | 🔒 已锁定 | 发起人锁了帖，只有成员能进 | 发起人 |
 | 🎉 已完成 | 活动已成行 / 已结束 | 发起人 |
 
-顶部还有分类筛选（球类、看电影、搭饭、自习考研、游戏桌游、出行、健身、其他）、
-关键词搜索、「只看我的」。
+> 早期版本是四列看板。但「招募中」往往堆成山而「已完成」空着，
+> 版面被状态分布绑架，所以改成了现在这样：状态降级为徽标 + 筛选项。
+
+### 在线状态
+
+谁在线一眼可见，判定直接复用 SSE 长连接（连接开着就是在线，断开留 45 秒宽限，
+避免刷新页面时闪成离线）：
+
+- 卡片上：发起人头像的小绿点 + 「N 在线」
+- 帖子里：每个成员的在线状态，正在房间里的人另有「在房间里」标记
+- 页脚：全站当前在线人数
+
+### 有人认真看了你的帖子 → 邮件提醒
+
+有人在你的帖子里**累计停留满 30 分钟**、**并且发过至少 1 条消息**时，
+给发起人发一封提醒邮件。三个条件缺一不可（发起人自己不算），
+每人每帖只提醒一次。邮件里带访客昵称、停留时长、发言条数和可直接点开的帖子链接。
+
+停留时长用「打点累加」统计：每 30 秒把还开着的连接累加一段，断开时补上最后一段。
+所以挂着页面不动会算，反复刷新也不会重复计。
+
+发起人要收提醒，得自己在「我的身份」里填一个邮箱——免注册不等于站点能拿到你的联系方式。
+邮箱只存在服务端、只用于发提醒，任何接口都不会把它返回给别人，也可以随时关掉开关。
+站点没配 SMTP 时功能自动降级：站内照常记录，只是不发信。
 
 ### 一个帖子里放多个选项
 
@@ -39,7 +71,7 @@
 
 ### 锁帖：不让别人进来
 
-发起人点「🔒 锁住帖子」（或把卡片拖进「已锁定」泳道）后：
+发起人点「🔒 锁住帖子」后：
 
 - 没加入的人**打不开**帖子详情，看不到说明、地点、成员名单和任何一条聊天记录——
   这些字段在**服务端**就不下发，不是前端藏起来；
@@ -53,7 +85,7 @@
 | 做法 | 效果 |
 | --- | --- |
 | 首次访问服务端签发 uid，写进 **HMAC 签名的 httpOnly Cookie** | 不用注册就能发言；Cookie 被篡改会验签失败，无法冒充别人 |
-| 昵称**全站唯一**，且展示时永远带 `#短号` | 同一个人在看板、成员列表、聊天里都是同一个可辨识身份 |
+| 昵称**全站唯一**，且展示时永远带 `#短号` | 同一个人在首页、成员列表、聊天里都是同一个可辨识身份 |
 | 每个身份配一串**身份口令** | 换设备 / 清了缓存，粘贴口令就还是同一个你（口令只存哈希） |
 | 改昵称、换头像后全站历史署名一起更新 | 身份不会分裂成好几个 |
 
@@ -68,12 +100,15 @@
 server/
   index.js      HTTP 服务 + 静态文件 + 优雅退出
   api.js        REST 路由、限流、权限校验
-  posts.js      帖子领域逻辑：泳道计算、锁帖判定、序列化（锁帖时在此裁掉敏感字段）
+  posts.js      帖子领域逻辑：状态计算、排序、锁帖判定、序列化（锁帖时在此裁掉敏感字段）
   identity.js   免注册身份：HMAC Cookie、昵称唯一、身份口令
-  realtime.js   SSE 推送（看板频道 + 每个帖子一个频道）
+  realtime.js   SSE 推送（首页频道 + 每个帖子一个频道）
+  presence.js   在线判定 + 帖子内停留时长打点累加
+  notify.js     「停留够久且发过言」的提醒规则与邮件内容
+  mailer.js     手写的极简 SMTP 客户端（隐式 TLS / STARTTLS）
   store.js      JSON 持久化，防抖 + 原子写
-public/         看板前端（原生 JS / CSS，无框架）
-test/smoke.js   45 项端到端冒烟测试
+public/         前端（原生 JS / CSS，无框架）
+test/smoke.js   68 项端到端冒烟测试（含用假 SMTP 服务器跑通的真实发信链路）
 deploy/         一键部署脚本
 ```
 
@@ -87,7 +122,7 @@ deploy/         一键部署脚本
 git clone https://github.com/agentdiary/dazi.git
 cd dazi
 npm start          # 默认 http://127.0.0.1:8080
-npm run smoke      # 跑一遍端到端测试（45 项）
+npm run smoke      # 跑一遍端到端测试（68 项）
 ```
 
 需要 Node.js ≥ 18，不需要 `npm install`。
@@ -120,21 +155,71 @@ sudo bash deploy/install.sh
 - **不占已用端口**：自动挑空闲端口，重复部署时沿用上次的端口；
 - **只写自己的数据目录**：systemd 里 `ProtectSystem=strict` + `ReadWritePaths=/var/lib/dazi`。
 
-### 免费域名
+### 免费域名与 IP 隐私
 
-默认用 **sslip.io**：形如 `dazi.<你的IP>.sslip.io` 的域名会自动解析到对应 IP，
-不用注册、不用配 DNS、永久免费。本项目部署后的地址就是：
+三档方案，隐私强度递增，都免费：
 
+| 方案 | URL 里有 IP 吗 | dig 能查到源站 IP 吗 | 代价 |
+| --- | --- | --- | --- |
+| sslip.io / nip.io | **有**（IP 就是域名的一部分） | 能 | 零配置，开箱即用 |
+| DuckDNS 等免费二级域名 | 没有 | 能 | 注册一个账号拿 token，2 分钟 |
+| Cloudflare 橙云代理 | 没有 | **不能**（只看得到 Cloudflare 的 IP） | 需要一个域名并把 NS 托管过去 |
+
+**默认（sslip.io）**：`dazi.<你的IP>.sslip.io` 自动解析到对应 IP，不用注册不用配 DNS。
+缺点是把服务器地址写在了 URL 上，脚本会就此给出警告。
+
+**DuckDNS**（推荐）：去 [duckdns.org](https://www.duckdns.org) 用 GitHub 登录，
+起一个子域名并复制 token，然后：
+
+```bash
+sudo DAZI_DUCKDNS_DOMAIN=campus-dazi DAZI_DUCKDNS_TOKEN=你的token bash deploy/install.sh
 ```
-https://dazi.43.130.127.226.sslip.io
+
+脚本会注册 `campus-dazi.duckdns.org → 你的 IP`，并装一个每 30 分钟刷新的定时任务，
+换 IP 也能自动跟上。
+
+**Cloudflare 代理**（唯一能真正隐藏源站 IP 的做法）：把域名托管到 Cloudflare，
+A 记录指向服务器并打开橙色云朵，然后用该域名部署：
+
+```bash
+sudo DAZI_DOMAIN=dazi.example.com DAZI_SKIP_TLS=1 bash deploy/install.sh
 ```
 
-同类免费方案还有 `nip.io`（用法一样）、`eu.org`（免费二级域名，需人工审核）、
-FreeDNS 的免费子域。想换成自己的域名：
+（证书交给 Cloudflare 签，所以跳过 certbot；记得在 Cloudflare 把 SSL 模式设为 Flexible，
+或者保留 certbot 并设为 Full。）另外别忘了在云厂商安全组里只放行 Cloudflare 的回源 IP 段，
+否则别人拿到真实 IP 仍能绕过代理直连。
+
+想换成自己的任意域名：
 
 ```bash
 sudo DAZI_DOMAIN=dazi.example.com bash deploy/install.sh
 ```
+
+### 配置邮件提醒
+
+发信走 SMTP，用 QQ / 网易邮箱的**授权码**最省事（不是登录密码）：
+邮箱设置 → 账户 → 开启 SMTP 服务 → 生成授权码。
+
+```bash
+sudo DAZI_DOMAIN=... \
+     DAZI_SMTP_HOST=smtp.qq.com \
+     DAZI_SMTP_PORT=465 \
+     DAZI_SMTP_USER=你的QQ号@qq.com \
+     DAZI_SMTP_PASS=授权码 \
+     bash deploy/install.sh
+```
+
+凭据会写进 `/etc/dazi.env`（权限 600），**不会**写进所有人可读的 systemd unit。
+重复部署时不带 SMTP 参数的话，脚本会保留上次配好的值。
+
+| 变量 | 说明 |
+| --- | --- |
+| `DAZI_SMTP_HOST` / `DAZI_SMTP_PORT` | 服务器地址与端口。465 走隐式 TLS，587/25 走 STARTTLS |
+| `DAZI_SMTP_USER` / `DAZI_SMTP_PASS` | 账号与授权码 |
+| `DAZI_SMTP_FROM` | 发信地址，默认同 USER |
+| `DAZI_SMTP_FROM_NAME` | 发件人显示名，默认「校园搭子」 |
+| `DAZI_NOTIFY_DWELL_MS` | 停留门槛，默认 1800000（30 分钟） |
+| `DAZI_NOTIFY_MIN_MESSAGES` | 发言条数门槛，默认 1 |
 
 ### 环境变量
 
@@ -146,6 +231,9 @@ sudo DAZI_DOMAIN=dazi.example.com bash deploy/install.sh
 | `DAZI_SECRET` | 首次启动随机生成并存盘 | 身份 Cookie 的签名密钥 |
 | `DAZI_SKIP_TLS` | `0` | 设为 `1` 跳过证书申请 |
 | `DAZI_EMAIL` | `admin@<域名>` | Let's Encrypt 通知邮箱 |
+| `DAZI_DUCKDNS_DOMAIN` | 空 | DuckDNS 子域名，填了就用它换掉 sslip.io |
+| `DAZI_DUCKDNS_TOKEN` | 空 | DuckDNS 的 token |
+| `DAZI_SITE_URL` | `https://<域名>` | 提醒邮件里链接用的站点地址，由脚本自动写入 |
 
 ### 自动部署（GitHub Actions）
 
@@ -170,12 +258,12 @@ cp /var/lib/dazi/dazi.json ~/  # 备份全部数据
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/meta` | 分类、泳道、预设项目、各项长度限制 |
+| GET | `/api/meta` | 分类、招募状态、排序方式、预设项目、限制、提醒规则 |
 | GET | `/api/me` | 取当前身份（没有则当场签发） |
-| PATCH | `/api/me` | 改昵称 / 头像 / 底色（昵称唯一） |
+| PATCH | `/api/me` | 改昵称 / 头像 / 底色 / 提醒邮箱（昵称唯一） |
 | POST | `/api/me/recovery` | 重新生成身份口令 |
 | POST | `/api/session/restore` | 用身份口令在新设备上找回身份 |
-| GET | `/api/posts` | 看板卡片，支持 `category` / `q` / `mine` |
+| GET | `/api/posts` | 帖子卡片，支持 `category` / `q` / `mine` / `state` / `sort` |
 | POST | `/api/posts` | 发帖 |
 | GET | `/api/posts/:id` | 详情（锁帖时对外人只返回壳） |
 | PATCH | `/api/posts/:id` | 发起人改信息 / 锁帖 / 标记完成 |
@@ -185,7 +273,7 @@ cp /var/lib/dazi/dazi.json ~/  # 备份全部数据
 | POST | `/api/posts/:id/vote` | 改投别的项目 |
 | POST | `/api/posts/:id/messages` | 在帖子里发言 |
 | POST | `/api/posts/:id/kick` | 发起人移出成员 |
-| GET | `/api/stream` | 看板实时流（SSE） |
+| GET | `/api/stream` | 首页实时流（SSE，同时用于在线判定） |
 | GET | `/api/posts/:id/stream` | 帖子实时流（SSE，锁帖后外人 403） |
 | GET | `/healthz` | 健康检查 |
 
@@ -198,6 +286,8 @@ cp /var/lib/dazi/dazi.json ~/  # 备份全部数据
 - 所有写操作校验发起人 / 成员身份；
 - 发帖 10 条/小时、发言 20 条/分钟的限流；
 - 前端一律用 `textContent` 渲染用户输入，不拼 HTML；
+- 提醒邮箱只存服务端，`publicUser` 不含该字段，任何接口都不会把它返回给别人；
+- SMTP 凭据放 `/etc/dazi.env`（600），不写进所有人可读的 systemd unit；
 - 静态文件服务做了目录穿越防护；
 - systemd 以专用账号运行，`ProtectSystem=strict`，只有数据目录可写。
 

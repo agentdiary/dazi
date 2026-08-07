@@ -137,6 +137,9 @@ function createUser() {
     createdAt: Date.now(),
     lastSeen: Date.now(),
     recoveryHash: hashRecovery(code),
+    // 邮箱完全可选，只用于「有人认真看了你的帖子」提醒，绝不对外暴露
+    email: '',
+    notifyEmail: true,
   };
   const db = store.data();
   db.users[uid] = user;
@@ -206,7 +209,7 @@ function rotateRecovery(uid) {
   return code;
 }
 
-/** 对外暴露的用户信息，绝不包含 recoveryHash。 */
+/** 对外暴露的用户信息，绝不包含 recoveryHash 和邮箱。 */
 function publicUser(user) {
   if (!user) {
     return { uid: null, nick: '已注销的搭子', emoji: '👤', color: '#cccccc', tag: '----' };
@@ -220,11 +223,21 @@ function publicUser(user) {
   };
 }
 
+/** 只返回给本人的信息，比 publicUser 多了邮箱等私有字段。 */
+function selfUser(user) {
+  return {
+    ...publicUser(user),
+    email: user.email || '',
+    notifyEmail: user.notifyEmail !== false,
+  };
+}
+
 module.exports = {
   identify,
   restore,
   rotateRecovery,
   publicUser,
+  selfUser,
   nickTaken,
   normalizeNick,
   shortId,

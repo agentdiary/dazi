@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#f7f5ef">
-<title>校园搭子 · 看板</title>
-<meta name="description" content="校园搭子社交看板：打球、羽毛球、看电影、搭饭、自习，一张看板找到同行的人。免注册直接发言，帖子可上锁。">
+<title>校园搭子 · 找到一起干的人</title>
+<meta name="description" content="校园搭子社交：打球、羽毛球、看电影、搭饭、自习，一张卡片找到同行的人。免注册直接发言，帖子可上锁。">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧃</text></svg>">
 <link rel="stylesheet" href="/styles.css">
 </head>
@@ -16,7 +16,7 @@
     <span class="brand-mark">搭</span>
     <div class="brand-text">
       <strong>校园搭子</strong>
-      <small>一张看板，找到一起干的人</small>
+      <small>一张卡片，找到一起干的人</small>
     </div>
   </div>
 
@@ -34,12 +34,31 @@
   </div>
 </header>
 
-<nav class="filters" id="filters" aria-label="活动分类"></nav>
+<div class="filterbar">
+  <nav class="filters" id="filters" aria-label="活动分类"></nav>
+  <div class="filter-end">
+    <button id="filterBtn" class="ghost-btn filter-btn" type="button" aria-expanded="false" aria-label="筛选与排序">
+      <span id="filterLabel">筛选</span><span class="caret" aria-hidden="true">⌄</span>
+    </button>
+    <div class="filter-panel" id="filterPanel" hidden>
+      <div class="panel-group">
+        <h4>排序</h4>
+        <div class="panel-options" id="sortOptions"></div>
+      </div>
+      <div class="panel-group">
+        <h4>招募状态</h4>
+        <div class="panel-options" id="stateOptions"></div>
+      </div>
+      <button type="button" class="ghost-btn reset-btn" id="resetFilter">恢复默认</button>
+    </div>
+  </div>
+</div>
 
-<main class="board" id="board" aria-label="搭子看板"></main>
+<main class="feed" id="feed" aria-label="搭子帖子"></main>
 
 <footer class="foot">
   <span id="connState" class="conn"><i></i>实时连接中…</span>
+  <span id="onlineNow" class="online-now"></span>
   <span>免注册 · 身份由服务器签发并长期保持一致 · 帖子可上锁</span>
 </footer>
 
@@ -114,7 +133,7 @@
       <div class="form-actions">
         <span class="form-err" id="createErr"></span>
         <button type="button" class="ghost-btn" data-close>取消</button>
-        <button type="submit" class="primary-btn">发布到看板</button>
+        <button type="submit" class="primary-btn">发布</button>
       </div>
     </form>
   </section>
@@ -143,6 +162,16 @@
         <span>底色</span>
         <div class="chip-row wrap" id="colorPicker"></div>
       </div>
+
+      <label class="field">
+        <span>提醒邮箱（可选）</span>
+        <input name="email" type="email" maxlength="120" placeholder="用来收「有人认真看了你的帖子」提醒">
+        <small class="field-hint" id="notifyHint"></small>
+      </label>
+      <label class="switch">
+        <input type="checkbox" name="notifyEmail" checked>
+        <span>开启邮件提醒</span>
+      </label>
 
       <div class="form-actions">
         <span class="form-err" id="meErr"></span>

@@ -8,11 +8,15 @@ const state = {
   me: null,
   meta: null,
   cards: [],
+  counts: {},
   category: '',
   query: '',
   mineOnly: false,
+  sort: 'active',     // 排序方式
+  stateFilter: '',    // 招募状态筛选
+  onlineNow: 0,
   detail: null,       // 当前打开的帖子详情
-  boardSource: null,  // 看板 SSE
+  boardSource: null,  // 首页 SSE
   postSource: null,   // 帖子内 SSE
   draft: { category: 'ball', options: [] },
 };
@@ -69,6 +73,18 @@ function avatar(user, size) {
   return node;
 }
 
+/** 带在线小绿点的头像。online 为 undefined 时不显示状态。 */
+function avatarWithPresence(user, online) {
+  const wrap = el('span', { class: 'avatar-wrap' }, [avatar(user)]);
+  if (online !== undefined) {
+    wrap.append(el('i', {
+      class: `dot-online${online ? '' : ' off'}`,
+      title: online ? '在线' : '离线',
+    }));
+  }
+  return wrap;
+}
+
 function timeAgo(ts) {
   const diff = Date.now() - ts;
   if (diff < 60_000) return '刚刚';
@@ -82,18 +98,32 @@ function clock(ts) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-/* ------------------------------------------------------------------ 看板 */
+/* ---------------------------------------------------------------- 帖子流 */
 
 async function loadBoard() {
   const params = new URLSearchParams();
   if (state.category) params.set('category', state.category);
   if (state.query) params.set('q', state.query);
   if (state.mineOnly) params.set('mine', '1');
+  if (state.stateFilter) params.set('state', state.stateFilter);
+  if (state.sort !== 'active') params.set('sort', state.sort);
   const data = await api(`/api/posts?${params}`);
   state.cards = data.cards;
-  if (data.me) state.me = data.me;
+  state.counts = data.counts || {};
+  state.onlineNow = data.onlineNow || 0;
+  if (data.me) state.me = { ...state.me, ...data.me };
   renderMe();
-  renderBoard();
+  renderFeed();
+  renderFilterPanel();
+  renderOnlineNow();
+}
+
+function renderOnlineNow() {
+  const node = $('#onlineNow');
+  node.replaceChildren(
+    el('i', { class: 'dot-online' }),
+    document.createTextNode(`${state.onlineNow} 人在线`),
+  );
 }
 
 function renderFilters() {
@@ -122,14 +152,21 @@ function cardNode(card) {
     'data-id': card.id,
     tabindex: '0',
     role: 'button',
-    draggable: card.isHost ? 'true' : 'false',
     onclick: () => openDetail(card.id),
     onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(card.id); } },
   });
 
+  // 招募状态从「版面分栏」降级成卡片上的徽标，帖子多少不再影响布局
+  const stateMeta = state.meta.states.find((s) => s.id === card.state);
   const badges = [];
-  if (card.locked) badges.push(el('span', { class: 'badge lock', text: card.hasLockCode ? '🔒 暗号' : '🔒 已锁' }));
-  if (card.status === 'done') badges.push(el('span', { class: 'badge done', text: '🎉 完成' }));
+  if (stateMeta) {
+    badges.push(el('span', {
+      class: `badge ${card.state}`,
+      text: `${stateMeta.emoji} ${stateMeta.label}`,
+      title: stateMeta.hint,
+    }));
+  }
+  if (card.locked && card.hasLockCode) badges.push(el('span', { class: 'badge lock', text: '需暗号' }));
   if (card.isHost) badges.push(el('span', { class: 'badge mine', text: '我发起' }));
   else if (card.isMember) badges.push(el('span', { class: 'badge mine', text: '已加入' }));
 
@@ -158,70 +195,85 @@ function cardNode(card) {
   const pct = Math.min(100, Math.round((card.memberCount / Math.max(card.capacity, 1)) * 100));
   node.append(el('div', { class: 'progress' }, [el('i', { style: { width: `${pct}%` } })]));
 
-  node.append(el('div', { class: 'card-foot' }, [
-    el('div', { class: 'stack' }, [avatar(card.host)]),
-    el('span', { class: 'seats', html: `<b>${card.memberCount}</b>/${card.capacity} 人 · ${timeAgo(card.updatedAt)}` }),
-  ]));
-
-  if (card.isHost) {
-    node.addEventListener('dragstart', (e) => {
-      node.classList.add('dragging');
-      e.dataTransfer.setData('text/plain', card.id);
-      e.dataTransfer.effectAllowed = 'move';
-    });
-    node.addEventListener('dragend', () => node.classList.remove('dragging'));
+  const foot = el('div', { class: 'card-foot' }, [
+    el('div', { class: 'stack' }, [avatarWithPresence(card.host, card.hostOnline)]),
+  ]);
+  if (card.onlineCount > 0) {
+    foot.append(el('span', {
+      class: 'online-pill',
+      title: `${card.onlineCount} 位成员在线`,
+    }, [el('i', { class: 'dot-online' }), document.createTextNode(`${card.onlineCount} 在线`)]));
   }
+  foot.append(el('span', {
+    class: 'seats',
+    html: `<b>${card.memberCount}</b>/${card.capacity} 人 · ${timeAgo(card.updatedAt)}`,
+  }));
+  node.append(foot);
   return node;
 }
 
-function renderBoard() {
-  const board = $('#board');
-  board.replaceChildren();
-  for (const col of state.meta.columns) {
-    const cards = state.cards.filter((c) => c.column === col.id);
-    const body = el('div', { class: 'column-body' });
-    if (cards.length === 0) {
-      body.append(el('div', { class: 'empty-col', text: col.id === 'open' ? '还没有人在这里发起，来当第一个？' : '暂时空空的' }));
-    } else {
-      for (const card of cards) body.append(cardNode(card));
-    }
+function renderFeed() {
+  const feed = $('#feed');
+  feed.replaceChildren();
 
-    const column = el('section', { class: 'column', 'data-col': col.id }, [
-      el('div', { class: 'column-head' }, [
-        el('span', { text: col.emoji }),
-        el('h2', { text: col.label }),
-        el('span', { class: 'column-count', text: String(cards.length) }),
-      ]),
-      el('div', { class: 'column-hint', text: col.hint }),
-      body,
-    ]);
-
-    // 发起人可以把自己的卡片拖到「已锁定 / 已完成 / 招募中」来改变状态
-    column.addEventListener('dragover', (e) => {
-      if (col.id === 'filling') return;      // 「快满了」是自动计算的，不能手动拖入
-      e.preventDefault();
-      column.classList.add('drop-target');
-    });
-    column.addEventListener('dragleave', () => column.classList.remove('drop-target'));
-    column.addEventListener('drop', async (e) => {
-      e.preventDefault();
-      column.classList.remove('drop-target');
-      const id = e.dataTransfer.getData('text/plain');
-      const card = state.cards.find((c) => c.id === id);
-      if (!card || !card.isHost || col.id === 'filling' || card.column === col.id) return;
-      const patch =
-        col.id === 'locked' ? { locked: true }
-          : col.id === 'done' ? { status: 'done', locked: false }
-            : { status: 'open', locked: false };
-      try {
-        await api(`/api/posts/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
-        toast(col.id === 'locked' ? '已锁定，别人进不来了 🔒' : `已移到「${col.label}」`);
-        loadBoard();
-      } catch (err) { toast(err.message); }
-    });
-
-    board.append(column);
+  if (state.cards.length === 0) {
+    const filtered = state.category || state.query || state.stateFilter || state.mineOnly;
+    feed.append(el('div', { class: 'feed-empty' }, [
+      el('div', { class: 'big', text: filtered ? '🔍' : '🌱' }),
+      el('h3', { text: filtered ? '没有符合条件的搭子局' : '还没有人发起搭子局' }),
+      el('p', { text: filtered ? '换个分类或把筛选条件放宽试试' : '点右上角「发起搭子」，当第一个吧' }),
+    ]));
+    return;
   }
+  for (const card of state.cards) feed.append(cardNode(card));
+}
+
+/* ------------------------------------------------------- 筛选与排序面板 */
+
+function renderFilterPanel() {
+  const sortBox = $('#sortOptions');
+  sortBox.replaceChildren();
+  for (const sort of state.meta.sorts) {
+    sortBox.append(el('button', {
+      class: 'panel-opt', type: 'button',
+      'aria-pressed': String(state.sort === sort.id),
+      onclick: () => { state.sort = sort.id; loadBoard(); },
+    }, [
+      el('span', { text: sort.emoji }),
+      el('span', { text: sort.label }),
+    ]));
+  }
+
+  const stateBox = $('#stateOptions');
+  stateBox.replaceChildren();
+  const rows = [{ id: '', label: '全部', emoji: '📋' }, ...state.meta.states];
+  for (const row of rows) {
+    const count = row.id ? state.counts[row.id] : state.counts.all;
+    stateBox.append(el('button', {
+      class: 'panel-opt', type: 'button',
+      'aria-pressed': String(state.stateFilter === row.id),
+      title: row.hint || '',
+      onclick: () => { state.stateFilter = row.id; loadBoard(); },
+    }, [
+      el('span', { text: row.emoji }),
+      el('span', { text: row.label }),
+      el('span', { class: 'n', text: String(count || 0) }),
+    ]));
+  }
+
+  // 按钮上直接显示当前生效的筛选，不用打开面板也能看到
+  const sortMeta = state.meta.sorts.find((s) => s.id === state.sort);
+  const stateMeta = state.meta.states.find((s) => s.id === state.stateFilter);
+  const label = [stateMeta && stateMeta.label, sortMeta && sortMeta.label].filter(Boolean).join(' · ');
+  $('#filterLabel').textContent = label || '筛选';
+  $('#filterBtn').classList.toggle('active', Boolean(state.stateFilter) || state.sort !== 'active');
+}
+
+function toggleFilterPanel(force) {
+  const panel = $('#filterPanel');
+  const open = force !== undefined ? force : panel.hidden;
+  panel.hidden = !open;
+  $('#filterBtn').setAttribute('aria-expanded', String(open));
 }
 
 /* --------------------------------------------------------------- 帖子详情 */
@@ -353,15 +405,20 @@ function detailSide(post) {
   side.append(votes);
 
   /* 成员 */
-  side.append(el('div', { class: 'section-title', text: `成员 ${post.members.length}` }));
+  const onlineMembers = post.members.filter((m) => m.online).length;
+  side.append(el('div', {
+    class: 'section-title',
+    text: `成员 ${post.members.length}${onlineMembers ? ` · ${onlineMembers} 人在线` : ''}`,
+  }));
   const members = el('div', { class: 'member-list' });
   for (const m of post.members) {
     const opt = post.options.find((o) => o.id === m.optionId);
     const row = el('div', { class: 'member-row' }, [
-      avatar(m),
+      avatarWithPresence(m, m.online),
       el('span', { text: m.nick }),
       el('span', { class: 'tag', text: `#${m.tag}` }),
       m.isHost ? el('span', { class: 'role', text: '发起人' }) : null,
+      m.inRoom ? el('span', { class: 'online-pill', text: '在房间里' }) : null,
       opt ? el('span', { class: 'opt-chip', text: `${opt.emoji}${opt.label}` }) : null,
     ]);
     if (post.isHost && !m.isHost) {
@@ -573,6 +630,8 @@ function connectBoardStream() {
   for (const evt of ['board:new', 'board:update', 'board:remove', 'user:update']) {
     source.addEventListener(evt, refresh);
   }
+  // 上下线变动比较频繁，合并得久一点，避免一直重绘
+  source.addEventListener('presence', debounce(() => loadBoard(), 1500));
 }
 
 function connectPostStream(postId) {
@@ -593,6 +652,7 @@ function connectPostStream(postId) {
   });
   source.addEventListener('post:update', () => refreshDetail());
   source.addEventListener('post:locked', () => refreshDetail());
+  source.addEventListener('presence', debounce(() => refreshDetail(), 1200));
   source.addEventListener('post:removed', () => { toast('发起人删除了这个帖子'); closeDetail(); });
 }
 
@@ -742,12 +802,27 @@ function openMe() {
     }));
   }
 
+  const emailInput = $('#meForm').querySelector('input[name=email]');
+  const notifyInput = $('#meForm').querySelector('input[name=notifyEmail]');
+  emailInput.value = state.me.email || '';
+  notifyInput.checked = state.me.notifyEmail !== false;
+  const rule = state.meta.notifyRule;
+  $('#notifyHint').textContent = state.meta.mailEnabled
+    ? `有人在你的帖子里待满 ${rule.dwellMinutes} 分钟、并且发过至少 ${rule.minMessages} 条消息时，给你发一封提醒邮件。每人每帖只提醒一次，邮箱不会公开给任何人。`
+    : `站点还没配置发信服务，填了也暂时收不到邮件。规则是：有人在你的帖子里待满 ${rule.dwellMinutes} 分钟且发过 ${rule.minMessages} 条以上消息就提醒你。`;
+
   $('#meForm').onsubmit = async (e) => {
     e.preventDefault();
     try {
       const data = await api('/api/me', {
         method: 'PATCH',
-        body: JSON.stringify({ nick: nickInput.value, emoji: draft.emoji, color: draft.color }),
+        body: JSON.stringify({
+          nick: nickInput.value,
+          emoji: draft.emoji,
+          color: draft.color,
+          email: emailInput.value,
+          notifyEmail: notifyInput.checked,
+        }),
       });
       state.me = data.user;
       renderMe();
@@ -798,6 +873,16 @@ function bindUi() {
     loadBoard();
   };
 
+  $('#filterBtn').onclick = (e) => { e.stopPropagation(); toggleFilterPanel(); };
+  $('#filterPanel').addEventListener('click', (e) => e.stopPropagation());
+  $('#resetFilter').onclick = () => {
+    state.sort = 'active';
+    state.stateFilter = '';
+    loadBoard();
+    toggleFilterPanel(false);
+  };
+  document.addEventListener('click', () => toggleFilterPanel(false));
+
   $('#search').addEventListener('input', debounce((e) => {
     state.query = e.target.value.trim();
     loadBoard();
@@ -836,6 +921,7 @@ function bindUi() {
   }
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
+    if (!$('#filterPanel').hidden) return toggleFilterPanel(false);
     if (!$('#detailOverlay').hidden) return closeDetail();
     for (const overlay of $$('.overlay')) overlay.hidden = true;
   });
@@ -855,6 +941,10 @@ async function main() {
     await loadBoard();
     connectBoardStream();
     setInterval(() => { if (!state.detail) loadBoard(); }, 60_000);
+
+    // 邮件提醒里的链接形如 /?post=xxxx，直接把帖子打开
+    const target = new URLSearchParams(location.search).get('post');
+    if (target) openDetail(target);
   } catch (err) {
     document.body.append(el('div', { class: 'locked-note' }, [
       el('div', { class: 'big', text: '😵' }),

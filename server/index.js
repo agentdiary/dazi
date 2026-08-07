@@ -6,6 +6,9 @@ const path = require('path');
 const { PORT, HOST, PUBLIC_DIR } = require('./config');
 const store = require('./store');
 const api = require('./api');
+const presence = require('./presence');
+const notify = require('./notify');
+const mailer = require('./mailer');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -80,8 +83,13 @@ server.headersTimeout = 60_000;
 server.keepAliveTimeout = 76_000;
 
 store.load();
+
+// 每 30 秒结算一次各房间的停留时长，顺带检查有没有该给发起人发提醒的
+presence.startTicking(() => notify.sweep());
+
 server.listen(PORT, HOST, () => {
   console.log(`[dazi] 校园搭子 running on http://${HOST}:${PORT}`);
+  console.log(`[dazi] 邮件提醒：${mailer.enabled() ? `已启用（${process.env.DAZI_SMTP_HOST}）` : '未配置 SMTP，仅站内提醒'}`);
 });
 
 function shutdown(signal) {

@@ -4,6 +4,9 @@ const store = require('./store');
 const identity = require('./identity');
 const rt = require('./realtime');
 const P = require('./posts');
+const presence = require('./presence');
+const notify = require('./notify');
+const mailer = require('./mailer');
 const { LIMITS } = require('./config');
 
 /* ---------------------------------------------------------------- 基础工具 */
@@ -76,7 +79,7 @@ setInterval(() => {
 function broadcastCard(post) {
   // 看板频道是公共的，只广播「有变化」信号 + 公共字段，
   // 每个浏览器自己带 cookie 去拉自己视角的数据，避免泄露锁帖内容。
-  rt.publish(rt.boardChannel(), 'board:update', { postId: post.id, column: P.columnOf(post) });
+  rt.publish(rt.boardChannel(), 'board:update', { postId: post.id, state: P.stateOf(post) });
 }
 
 function broadcastPost(post, event, payload) {
@@ -93,9 +96,15 @@ async function handle(req, res, url) {
   if (path === '/api/meta' && method === 'GET') {
     return ok(res, {
       categories: P.CATEGORIES,
-      columns: P.COLUMNS,
+      states: P.STATES,
+      sorts: P.SORTS,
       presetOptions: P.PRESET_OPTIONS,
       limits: LIMITS,
+      mailEnabled: mailer.enabled(),
+      notifyRule: {
+        dwellMinutes: Math.round(notify.DWELL_THRESHOLD_MS / 60000),
+        minMessages: notify.MIN_MESSAGES,
+      },
     });
   }
 
@@ -103,10 +112,12 @@ async function handle(req, res, url) {
 
   if (path === '/api/me' && method === 'GET') {
     const me = identity.identify(req, res);
+    presence.markSeen(me.user.uid);
     return ok(res, {
-      user: identity.publicUser(me.user),
+      user: identity.selfUser(me.user),
       fresh: me.fresh,
       recoveryCode: me.recoveryCode, // 仅首次签发时返回一次
+      onlineNow: presence.onlineCount(),
     });
   }
 
@@ -130,10 +141,16 @@ async function handle(req, res, url) {
     if (typeof body.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(body.color.trim())) {
       user.color = body.color.trim();
     }
+    if (typeof body.email === 'string') {
+      const email = body.email.trim();
+      if (email && !mailer.isValidAddress(email)) return fail(res, 400, '邮箱格式不太对');
+      user.email = email;
+    }
+    if (body.notifyEmail !== undefined) user.notifyEmail = Boolean(body.notifyEmail);
     store.save();
     // 昵称/头像变了，看板与聊天里的历史署名也要跟着变（身份统一）。
     rt.publish(rt.boardChannel(), 'user:update', { uid: user.uid });
-    return ok(res, { user: identity.publicUser(user) });
+    return ok(res, { user: identity.selfUser(user) });
   }
 
   if (path === '/api/me/recovery' && method === 'POST') {
@@ -154,11 +171,17 @@ async function handle(req, res, url) {
   if (path === '/api/posts' && method === 'GET') {
     const me = identity.identify(req, res);
     const uid = me.user.uid;
+    presence.markSeen(uid);
     const db = store.data();
     const category = url.searchParams.get('category') || '';
     const q = (url.searchParams.get('q') || '').trim().toLowerCase();
     const mine = url.searchParams.get('mine') === '1';
+    const stateFilter = url.searchParams.get('state') || '';
+    const sort = P.SORTS.some((s) => s.id === url.searchParams.get('sort'))
+      ? url.searchParams.get('sort')
+      : 'active';
 
+    // 先序列化再排序：空位、人气这些排序键都在卡片视图上，避免重复计算。
     const cards = Object.values(db.posts)
       .filter((post) => (category ? post.category === category : true))
       .filter((post) => (mine ? P.isHost(post, uid) || P.isMember(post, uid) : true))
@@ -169,10 +192,25 @@ async function handle(req, res, url) {
           .toLowerCase();
         return haystack.includes(q);
       })
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-      .map((post) => P.serializeCard(post, uid));
+      .map((post) => P.serializeCard(post, uid))
+      .filter((card) => (stateFilter ? card.state === stateFilter : true))
+      .sort(P.comparator(sort));
 
-    return ok(res, { cards, me: identity.publicUser(me.user) });
+    // 各状态各有多少条，用于筛选面板上显示数量
+    const counts = { all: 0 };
+    for (const post of Object.values(db.posts)) {
+      const state = P.stateOf(post);
+      counts[state] = (counts[state] || 0) + 1;
+      counts.all += 1;
+    }
+
+    return ok(res, {
+      cards,
+      counts,
+      sort,
+      me: identity.publicUser(me.user),
+      onlineNow: presence.onlineCount(),
+    });
   }
 
   if (path === '/api/posts' && method === 'POST') {
@@ -240,16 +278,36 @@ async function handle(req, res, url) {
   /* --- 实时流（要放在通用帖子路由之前） --- */
 
   if (path === '/api/stream' && method === 'GET') {
-    identity.identify(req, res);
+    const me = identity.identify(req, res);
+    const uid = me.user.uid;
+    presence.connect(uid);
+    res.on('close', () => {
+      presence.disconnect(uid);
+      // 谁上下线会影响所有卡片上的在线人数，广播一下让大家刷新
+      rt.publish(rt.boardChannel(), 'presence', { uid, online: presence.isOnline(uid) });
+    });
+    rt.publish(rt.boardChannel(), 'presence', { uid, online: true });
     return rt.openStream(req, res, rt.boardChannel());
   }
 
   const streamMatch = path.match(/^\/api\/posts\/([a-f0-9]{6,32})\/stream$/);
   if (streamMatch && method === 'GET') {
     const me = identity.identify(req, res);
+    const uid = me.user.uid;
     const post = store.data().posts[streamMatch[1]];
     if (!post) return fail(res, 404, '帖子不存在');
-    if (!P.canEnter(post, me.user.uid)) return fail(res, 403, '该帖子已被发起人锁定');
+    if (!P.canEnter(post, uid)) return fail(res, 403, '该帖子已被发起人锁定');
+
+    presence.connect(uid);
+    presence.enterRoom(post.id, uid);
+    broadcastPost(post, 'presence', { uid, inRoom: true });
+    res.on('close', () => {
+      presence.disconnect(uid);
+      presence.leaveRoom(post.id, uid);
+      // 离开房间时结算这一段停留，可能刚好满足提醒条件
+      notify.checkPost(post);
+      broadcastPost(post, 'presence', { uid, inRoom: false });
+    });
     return rt.openStream(req, res, rt.postChannel(post.id));
   }
 
@@ -409,9 +467,13 @@ async function handlePost(req, res, url, post, action, method) {
     post.messages.push(msg);
     P.trimMessages(post);
     post.updatedAt = Date.now();
+    // 记一笔发言，并结算到此刻的停留时长——发言后可能刚好够到提醒条件
+    presence.accrue(post.id, uid);
+    presence.countMessage(post, uid);
+    notify.checkPost(post);
     store.save();
     broadcastPost(post, 'message', { postId: post.id, message: P.serializeMessage(msg) });
-    rt.publish(rt.boardChannel(), 'board:update', { postId: post.id, column: P.columnOf(post) });
+    rt.publish(rt.boardChannel(), 'board:update', { postId: post.id, state: P.stateOf(post) });
     return json(res, 201, { message: P.serializeMessage(msg) });
   }
 
