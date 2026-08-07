@@ -23,8 +23,11 @@ DATA_DIR=/var/lib/${APP_NAME}
 SERVICE_USER=${APP_NAME}
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-log()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m警告:\033[0m %s\n' "$*"; }
+# 诊断信息一律走 stderr：像 DOMAIN="$(setup_duckdns)" 这样的命令替换只该
+# 捕获函数的返回值，日志混进 stdout 会被当成返回值用出去（曾把整行日志
+# 连同颜色码写进 nginx 的 server_name，导致 nginx 起不来）。
+log()  { printf '\033[1;36m==>\033[0m %s\n' "$*" >&2; }
+warn() { printf '\033[1;33m警告:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m错误:\033[0m %s\n' "$*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "请用 root 运行：sudo bash deploy/install.sh"
@@ -98,6 +101,14 @@ else
   DOMAIN="${DAZI_DOMAIN:-${APP_NAME}.${PUBLIC_IP}.sslip.io}"
 fi
 EMAIL="${DAZI_EMAIL:-admin@${DOMAIN}}"
+
+# 兜底：域名会被原样写进 nginx 配置，长得不像域名就必须当场停下，
+# 否则错误会以「nginx 起不来」的形式在几十行之后才暴露出来。
+if [[ ! "$DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]; then
+  die "算出来的域名不合法：「${DOMAIN}」
+     它会被写进 nginx 的 server_name，必须是纯粹的主机名。
+     请用 DAZI_DOMAIN=<你的域名> 显式指定后重试。"
+fi
 
 if [[ "$DOMAIN" == *.sslip.io || "$DOMAIN" == *.nip.io ]]; then
   warn "当前域名把服务器 IP 直接写在了 URL 里（${DOMAIN}）。"
@@ -312,10 +323,20 @@ log "服务已启动：$(curl -s http://127.0.0.1:${PORT}/healthz)"
 # ---------------------------------------------------------------- nginx
 
 log "配置 nginx 站点 ${DOMAIN}"
+
+# 关掉 IPv6 的机器上，写死 listen [::]:80 会让 nginx -t 直接失败
+# （socket() [::]:80 failed: Address family not supported by protocol）
+LISTEN6=""
+if [[ -f /proc/net/if_inet6 ]]; then
+  LISTEN6="    listen [::]:80;"
+else
+  log "本机未启用 IPv6，nginx 只监听 IPv4"
+fi
+
 cat > /etc/nginx/sites-available/${APP_NAME} <<NGINX
 server {
     listen 80;
-    listen [::]:80;
+${LISTEN6}
     server_name ${DOMAIN};
 
     # 让 certbot 的 HTTP-01 校验能过
