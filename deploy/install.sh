@@ -294,7 +294,7 @@ log "写入 systemd 服务"
 cat > /etc/systemd/system/${APP_NAME}.service <<UNIT
 [Unit]
 Description=校园搭子 (dazi) - 看板风格校园搭子社交
-Documentation=https://github.com/agentdiary/dazi
+Documentation=https://github.com/1elel1/dazi
 After=network.target
 
 [Service]

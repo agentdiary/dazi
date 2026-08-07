@@ -169,7 +169,7 @@ deploy/         一键部署脚本
 ## 本地运行
 
 ```bash
-git clone https://github.com/agentdiary/dazi.git
+git clone https://github.com/1elel1/dazi.git
 cd dazi
 npm start          # 默认 http://127.0.0.1:8080
 npm run smoke      # 跑一遍端到端测试（126 项）
@@ -184,7 +184,7 @@ npm run smoke      # 跑一遍端到端测试（126 项）
 在服务器上执行：
 
 ```bash
-git clone https://github.com/agentdiary/dazi.git
+git clone https://github.com/1elel1/dazi.git
 cd dazi
 sudo bash deploy/install.sh
 ```
