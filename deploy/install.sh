@@ -67,12 +67,21 @@ setup_duckdns() {
   fi
 
   log "向 DuckDNS 注册 ${sub}.duckdns.org → ${PUBLIC_IP}"
-  local answer
+  local answer curl_status=0
   answer="$(curl -fsS --max-time 20 \
-    "https://www.duckdns.org/update?domains=${sub}&token=${DAZI_DUCKDNS_TOKEN}&ip=${PUBLIC_IP}" || echo FAIL)"
-  [[ "$answer" == OK ]] || die "DuckDNS 更新失败（返回：${answer}）。
-     KO 一般意味着：token 不对，或者这个子域名不在你的账号名下（被别人占了）。
-     去 https://www.duckdns.org 确认后重试。"
+    "https://www.duckdns.org/update?domains=${sub}&token=${DAZI_DUCKDNS_TOKEN}&ip=${PUBLIC_IP}")" || curl_status=$?
+
+  if [[ $curl_status -ne 0 ]]; then
+    die "连不上 duckdns.org（curl 退出码 ${curl_status}）。
+     这台服务器可能访问不了 DuckDNS。可以先不用它，改成：
+       sudo DAZI_DOMAIN=${APP_NAME}.${PUBLIC_IP}.sslip.io bash deploy/install.sh
+     或者用一个能正常解析的自有域名。"
+  fi
+  if [[ "$answer" != OK ]]; then
+    die "DuckDNS 拒绝了这次更新（返回：${answer}）。
+     KO 一般意味着 token 不对，或这个子域名不在你的账号名下。
+     token 在 https://www.duckdns.org 页面顶部，形如 a1b2c3d4-e5f6-7890-abcd-ef1234567890。"
+  fi
 
   # IP 变了要能自动跟上，挂个定时任务每 30 分钟刷一次
   cat > /etc/cron.d/${APP_NAME}-duckdns <<CRON
