@@ -356,12 +356,17 @@ if [[ "${DAZI_SKIP_TLS:-0}" != "1" ]]; then
   else
     warn "证书申请失败（80 端口不通 / 域名解析没生效 / 触发速率限制都可能导致）。"
     warn "站点仍可通过 http://${DOMAIN} 访问，稍后可重试：certbot --nginx -d ${DOMAIN}"
+    # 提醒邮件里的链接得跟实际能访问的协议一致，不能写死 https
+    SCHEME=http
+    sed -i "/^DAZI_SITE_URL=/d" "$ENV_FILE"
+    echo "DAZI_SITE_URL=http://${DOMAIN}" >> "$ENV_FILE"
+    systemctl restart ${APP_NAME}
   fi
 fi
 
 echo
 log "部署完成 🎉"
-echo "   站点     : https://${DOMAIN}"
+echo "   站点     : ${SCHEME}://${DOMAIN}"
 echo "   服务状态 : systemctl status ${APP_NAME}"
 echo "   实时日志 : journalctl -u ${APP_NAME} -f"
 echo "   数据目录 : ${DATA_DIR}  （dazi.json 是全部数据，直接复制即可备份）"
