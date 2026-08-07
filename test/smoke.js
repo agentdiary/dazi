@@ -169,6 +169,89 @@ function readDb() {
   return JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'dazi.json'), 'utf8'));
 }
 
+/**
+ * 单独起一个开了 DAZI_REQUIRE_LOGIN=1 的实例，验证「强制登录」这条开关。
+ * 这是同一套身份体系的另一种形态：浏览照常开放，写操作必须先有账号。
+ */
+async function testRequireLoginMode() {
+  const port = PORT + 10;
+  const base = `http://127.0.0.1:${port}`;
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dazi-login-'));
+  const server = spawn(process.execPath, [path.join(__dirname, '..', 'server', 'index.js')], {
+    env: {
+      ...process.env,
+      DAZI_PORT: String(port),
+      DAZI_HOST: '127.0.0.1',
+      DAZI_DATA_DIR: dataDir,
+      DAZI_REQUIRE_LOGIN: '1',
+      DAZI_ADMIN_USER: '',
+      DAZI_ADMIN_PASS: '',
+      DAZI_SMTP_HOST: '',
+    },
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  server.stdout.resume();
+
+  const call = (jar) => async (method, urlPath, body) => {
+    const res = await fetch(base + urlPath, {
+      method,
+      headers: {
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+        ...(jar.size ? { Cookie: [...jar].map(([k, v]) => `${k}=${v}`).join('; ') } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    for (const raw of res.headers.getSetCookie ? res.headers.getSetCookie() : []) {
+      const [pair] = raw.split(';');
+      const i = pair.indexOf('=');
+      jar.set(pair.slice(0, i).trim(), pair.slice(i + 1).trim());
+    }
+    let data = null;
+    try { data = await res.json(); } catch (_) { /* 无 body */ }
+    return { status: res.status, data };
+  };
+
+  try {
+    // 等这个实例起来
+    for (let i = 0; i < 60; i++) {
+      try {
+        await fetch(`${base}/healthz`);
+        break;
+      } catch (_) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
+
+    console.log('\n强制登录模式（DAZI_REQUIRE_LOGIN=1）');
+    const anon = call(new Map());
+    const meta = await anon('GET', '/api/meta');
+    check('meta 告诉前端本站要求登录', meta.data.requireLogin === true);
+    check('匿名仍然可以浏览', (await anon('GET', '/api/posts')).status === 200);
+
+    const anonPost = await anon('POST', '/api/posts', {
+      title: '匿名想发帖', category: 'other', options: [{ label: '随便', emoji: '✨' }],
+    });
+    check('匿名不能发帖', anonPost.status === 401, `got ${anonPost.status}`);
+
+    const registered = call(new Map());
+    await registered('GET', '/api/me');
+    await registered('POST', '/api/auth/register', { username: 'realuser', password: 'secret123' });
+    const okPost = await registered('POST', '/api/posts', {
+      title: '注册用户发的帖', category: 'other', options: [{ label: '篮球', emoji: '🏀' }],
+    });
+    check('注册后可以发帖', okPost.status === 201, JSON.stringify(okPost.data));
+
+    const anonTalk = await anon('POST', `/api/posts/${okPost.data.post.id}/messages`, { text: '我想说话' });
+    check('匿名不能发言', anonTalk.status === 401);
+    const anonJoin = await anon('POST', `/api/posts/${okPost.data.post.id}/join`, {});
+    check('匿名不能加入', anonJoin.status === 401);
+  } finally {
+    server.kill('SIGTERM');
+    await new Promise((r) => setTimeout(r, 300));
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const smtp = fakeSmtpServer(SMTP_PORT);
   const server = spawn(process.execPath, [path.join(__dirname, '..', 'server', 'index.js')], {
@@ -187,6 +270,9 @@ async function main() {
       DAZI_SMTP_ALLOW_PLAINTEXT: '1',
       DAZI_SMTP_USER: 'dazi@test',
       DAZI_SMTP_PASS: 'secret',
+      // 管理员账号由环境变量引导创建
+      DAZI_ADMIN_USER: 'admin',
+      DAZI_ADMIN_PASS: 'admin12345',
     },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
@@ -444,6 +530,128 @@ async function main() {
       readDb().posts[qid].visits[qv.data.user.uid].notified === true);
     qRoom.stop();
 
+    console.log('\n注册 / 登录');
+    const newbie = client();
+    const newbieMe = await newbie('GET', '/api/me');
+    const newbieUid = newbieMe.data.user.uid;
+    const newbieNick = newbieMe.data.user.nick;
+
+    // 先以匿名身份发个帖，验证注册后这些内容还跟着走
+    const preRegPost = await newbie('POST', '/api/posts', {
+      title: '注册前发的帖', category: 'other', capacity: 4,
+      options: [{ label: '随便', emoji: '✨' }],
+    });
+    check('匿名身份可以先发帖（免注册仍然成立）', preRegPost.status === 201);
+
+    const badName = await newbie('POST', '/api/auth/register', { username: 'ab', password: 'secret123' });
+    check('用户名太短被拒', badName.status === 400);
+    const badPass = await newbie('POST', '/api/auth/register', { username: 'xiaoming', password: '123' });
+    check('密码太短被拒', badPass.status === 400);
+
+    const reg = await newbie('POST', '/api/auth/register', { username: 'xiaoming', password: 'secret123' });
+    check('注册成功', reg.status === 200 && reg.data.user.username === 'xiaoming');
+    check('注册不新建身份，uid 保持不变', reg.data.user.uid === newbieUid);
+    check('注册后昵称保持不变', reg.data.user.nick === newbieNick);
+    check('注册前发的帖子仍属于自己',
+      (await newbie('GET', `/api/posts/${preRegPost.data.post.id}`)).data.post.isHost === true);
+
+    const dupUser = await client()('POST', '/api/auth/register', { username: 'XiaoMing', password: 'secret123' });
+    check('用户名唯一（忽略大小写）', dupUser.status === 400, `got ${dupUser.status}`);
+    const regTwice = await newbie('POST', '/api/auth/register', { username: 'another', password: 'secret123' });
+    check('同一身份不能重复注册', regTwice.status === 400);
+
+    const otherPc = client();
+    const wrongPw = await otherPc('POST', '/api/auth/login', { username: 'xiaoming', password: 'wrongpass' });
+    check('密码错误登录失败', wrongPw.status === 401);
+    const noUser = await otherPc('POST', '/api/auth/login', { username: 'nobody-here', password: 'whatever' });
+    check('用户不存在也返回同样的错误', noUser.status === 401 && noUser.data.error === wrongPw.data.error);
+
+    const login = await otherPc('POST', '/api/auth/login', { username: 'xiaoming', password: 'secret123' });
+    check('换设备用账号密码登录', login.status === 200 && login.data.user.uid === newbieUid);
+    check('登录后拿回原来的帖子',
+      (await otherPc('GET', `/api/posts/${preRegPost.data.post.id}`)).data.post.isHost === true);
+
+    const badOld = await newbie('POST', '/api/auth/password', { oldPassword: 'nope', newPassword: 'newsecret1' });
+    check('改密码要验原密码', badOld.status === 400);
+    const changed = await newbie('POST', '/api/auth/password', { oldPassword: 'secret123', newPassword: 'newsecret1' });
+    check('改密码成功', changed.status === 200);
+    check('新密码可登录',
+      (await client()('POST', '/api/auth/login', { username: 'xiaoming', password: 'newsecret1' })).status === 200);
+    check('旧密码失效',
+      (await client()('POST', '/api/auth/login', { username: 'xiaoming', password: 'secret123' })).status === 401);
+
+    const loggedOut = await otherPc('POST', '/api/auth/logout', {});
+    check('退出登录后回到全新匿名身份',
+      loggedOut.status === 200 && loggedOut.data.user.uid !== newbieUid && !loggedOut.data.user.username);
+
+    check('密码哈希不出现在任何响应里',
+      !JSON.stringify(reg.data).includes('scrypt') && !JSON.stringify(login.data).includes('scrypt'));
+    check('别人看不到你的用户名',
+      !JSON.stringify((await client()('GET', '/api/posts')).data).includes('xiaoming'));
+
+    console.log('\n管理员');
+    const adminClient = client();
+    const adminLogin = await adminClient('POST', '/api/auth/login', { username: 'admin', password: 'admin12345' });
+    check('环境变量里的管理员账号已自动创建', adminLogin.status === 200, JSON.stringify(adminLogin.data));
+    check('管理员身份带 admin 标记', adminLogin.data.user.admin === true);
+
+    const notAdmin = await newbie('GET', '/api/admin/overview');
+    check('普通用户进不了管理接口', notAdmin.status === 403);
+    const anonAdmin = await client()('GET', '/api/admin/users');
+    check('匿名用户进不了管理接口', anonAdmin.status === 403);
+
+    const ov = await adminClient('GET', '/api/admin/overview');
+    check('管理员能看站点概览', ov.status === 200 && typeof ov.data.stats.users === 'number');
+    const adminUsers = await adminClient('GET', '/api/admin/users?q=xiaoming');
+    check('管理员能按关键词搜用户', adminUsers.data.users.some((u) => u.username === 'xiaoming'));
+    const adminPosts = await adminClient('GET', '/api/admin/posts');
+    check('管理员能看帖子列表', Array.isArray(adminPosts.data.posts) && adminPosts.data.posts.length > 0);
+
+    // 管理员可以管别人的帖子
+    const someonePost = preRegPost.data.post.id;
+    const adminLock = await adminClient('PATCH', `/api/posts/${someonePost}`, { locked: true });
+    check('管理员能锁别人的帖子', adminLock.status === 200 && adminLock.data.post.locked === true);
+    await adminClient('PATCH', `/api/posts/${someonePost}`, { locked: false });
+
+    // 封禁
+    const ban = await adminClient('POST', `/api/admin/users/${newbieUid}/ban`, { banned: true });
+    check('管理员能封禁用户', ban.status === 200);
+    const bannedPost = await newbie('POST', '/api/posts', {
+      title: '封禁后还想发帖', category: 'other', options: [{ label: '随便', emoji: '✨' }],
+    });
+    check('被封禁后不能发帖', bannedPost.status === 403, `got ${bannedPost.status}`);
+    const bannedTalk = await newbie('POST', `/api/posts/${someonePost}/messages`, { text: '我还能说话吗' });
+    check('被封禁后不能发言', bannedTalk.status === 403);
+    check('被封禁后不能登录',
+      (await client()('POST', '/api/auth/login', { username: 'xiaoming', password: 'newsecret1' })).status === 401);
+    check('被封禁后仍能浏览', (await newbie('GET', '/api/posts')).status === 200);
+
+    await adminClient('POST', `/api/admin/users/${newbieUid}/ban`, { banned: false });
+    check('解封后恢复发言',
+      (await newbie('POST', `/api/posts/${someonePost}/messages`, { text: '我回来了' })).status === 201);
+
+    const selfBan = await adminClient('POST', `/api/admin/users/${adminLogin.data.user.uid}/ban`, { banned: true });
+    check('管理员不能封禁自己', selfBan.status === 400);
+    const lastAdmin = await adminClient('POST', `/api/admin/users/${adminLogin.data.user.uid}/role`, { role: 'user' });
+    check('不能把自己降权（防止后台锁死）', lastAdmin.status === 400);
+
+    // 管理员删消息
+    const msgs = (await adminClient('GET', `/api/posts/${someonePost}`)).data.post.messages;
+    const realMsg = msgs.find((m) => m.kind === 'msg');
+    const delMsg = await adminClient('DELETE', `/api/admin/posts/${someonePost}/messages/${realMsg.id}`);
+    check('管理员能删除违规消息', delMsg.status === 200);
+    check('删除后消息不在了',
+      !(await adminClient('GET', `/api/posts/${someonePost}`)).data.post.messages.some((m) => m.id === realMsg.id));
+
+    const promoted = await adminClient('POST', `/api/admin/users/${newbieUid}/role`, { role: 'admin' });
+    check('管理员能提升他人为管理员', promoted.status === 200);
+    check('被提升者能进管理后台', (await newbie('GET', '/api/admin/overview')).status === 200);
+    await adminClient('POST', `/api/admin/users/${newbieUid}/role`, { role: 'user' });
+    check('降权后进不去后台', (await newbie('GET', '/api/admin/overview')).status === 403);
+
+    const adminDel = await adminClient('DELETE', `/api/posts/${someonePost}`);
+    check('管理员能删除任何帖子', adminDel.status === 200);
+
     console.log('\n持久化');
     const del = await host('DELETE', `/api/posts/${postId}`);
     check('发起人可以删除帖子', del.status === 200);
@@ -458,6 +666,8 @@ async function main() {
     smtp.close();
     fs.rmSync(DATA_DIR, { recursive: true, force: true });
   }
+
+  await testRequireLoginMode();
 
   console.log(`\n通过 ${passed} 项，失败 ${failures.length} 项`);
   if (failures.length) {

@@ -9,6 +9,10 @@ const DATA_DIR = process.env.DAZI_DATA_DIR
 module.exports = {
   PORT: Number(process.env.DAZI_PORT || 8080),
   HOST: process.env.DAZI_HOST || '127.0.0.1',
+
+  // 默认允许匿名发言（免注册）。设为 1 后，浏览仍然开放，但发帖、加入、
+  // 发言都必须先注册登录。两种形态共用同一套身份体系，改这个开关即可切换。
+  REQUIRE_LOGIN: process.env.DAZI_REQUIRE_LOGIN === '1',
   DATA_DIR,
   DB_FILE: path.join(DATA_DIR, 'dazi.json'),
   SECRET_FILE: path.join(DATA_DIR, 'secret.key'),

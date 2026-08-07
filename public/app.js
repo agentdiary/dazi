@@ -19,6 +19,8 @@ const state = {
   boardSource: null,  // 首页 SSE
   postSource: null,   // 帖子内 SSE
   draft: { category: 'ball', options: [] },
+  authMode: 'login',   // 登录 / 注册 弹窗当前处于哪个页签
+  adminTab: 'users',   // 管理后台当前页签
 };
 
 /* ------------------------------------------------------------------ 工具 */
@@ -418,6 +420,7 @@ function detailSide(post) {
       el('span', { text: m.nick }),
       el('span', { class: 'tag', text: `#${m.tag}` }),
       m.isHost ? el('span', { class: 'role', text: '发起人' }) : null,
+      m.admin ? el('span', { class: 'badge lock', text: '管理员' }) : null,
       m.inRoom ? el('span', { class: 'online-pill', text: '在房间里' }) : null,
       opt ? el('span', { class: 'opt-chip', text: `${opt.emoji}${opt.label}` }) : null,
     ]);
@@ -742,6 +745,244 @@ async function submitCreate(e) {
   }
 }
 
+/* ------------------------------------------------------------ 登录 / 注册 */
+
+function openAuth(mode = 'login') {
+  state.authMode = mode;
+  $('#authErr').textContent = '';
+  $('#authOverlay').hidden = false;
+  renderAuthMode();
+  $('#authForm').querySelector('input[name=username]').focus();
+}
+
+function renderAuthMode() {
+  const isLogin = state.authMode === 'login';
+  $('#tabLogin').setAttribute('aria-selected', String(isLogin));
+  $('#tabRegister').setAttribute('aria-selected', String(!isLogin));
+  $('#authSubmit').textContent = isLogin ? '登录' : '注册';
+  $('#authForm').querySelector('input[name=password]')
+    .setAttribute('autocomplete', isLogin ? 'current-password' : 'new-password');
+
+  const rule = state.meta.usernameRule;
+  $('#authSub').textContent = isLogin
+    ? '登录后可以在任何设备上找回你的帖子和身份'
+    : '注册会把账号绑定到你当前的身份上';
+  $('#authHint').textContent = isLogin
+    ? ''
+    : `用户名 ${rule.min}-${rule.max} 位，密码至少 ${rule.passwordMin} 位。`
+      + `注册不会新建一个人：你现在的昵称 ${state.me ? state.me.nick : ''}、已发的帖子和聊天记录都会保留。`;
+}
+
+async function submitAuth(e) {
+  e.preventDefault();
+  const form = e.target;
+  const data = Object.fromEntries(new FormData(form).entries());
+  const btn = $('#authSubmit');
+  btn.disabled = true;
+  try {
+    const endpoint = state.authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+    const result = await api(endpoint, { method: 'POST', body: JSON.stringify(data) });
+    state.me = result.user;
+    form.reset();
+    $('#authOverlay').hidden = true;
+    renderMe();
+    toast(state.authMode === 'login' ? `欢迎回来，${result.user.nick}` : '注册成功，身份已绑定');
+    loadBoard();
+  } catch (err) {
+    $('#authErr').textContent = err.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function logout() {
+  if (!confirm('退出后会回到一个全新的匿名身份，之前的帖子仍属于原账号。确定？')) return;
+  try {
+    const result = await api('/api/auth/logout', { method: 'POST' });
+    state.me = result.user;
+    renderMe();
+    $('#meOverlay').hidden = true;
+    toast('已退出登录');
+    loadBoard();
+  } catch (err) { toast(err.message); }
+}
+
+async function changePassword() {
+  const oldPassword = prompt('请输入当前密码：');
+  if (!oldPassword) return;
+  const newPassword = prompt(`请输入新密码（至少 ${state.meta.usernameRule.passwordMin} 位）：`);
+  if (!newPassword) return;
+  try {
+    await api('/api/auth/password', {
+      method: 'POST', body: JSON.stringify({ oldPassword, newPassword }),
+    });
+    toast('密码已修改');
+  } catch (err) { toast(err.message); }
+}
+
+function renderAccountBox() {
+  const box = $('#accountBox');
+  if (!box || !state.me) return;
+  box.replaceChildren();
+
+  if (state.me.username) {
+    box.append(
+      el('h3', { text: `已登录：${state.me.username}${state.me.admin ? '（管理员）' : ''}` }),
+      el('p', { text: '账号和这个身份是绑定的，换设备用账号密码登录即可拿回全部内容。' }),
+      el('div', { class: 'account-actions' }, [
+        el('button', { class: 'ghost-btn', type: 'button', text: '修改密码', onclick: changePassword }),
+        el('button', { class: 'ghost-btn danger', type: 'button', text: '退出登录', onclick: logout }),
+      ]),
+    );
+  } else {
+    box.append(
+      el('h3', { text: '还没有注册账号' }),
+      el('p', {
+        text: state.meta.requireLogin
+          ? '本站已开启「登录后才能发言」，注册后才能发帖和聊天。'
+          : '不注册也能正常用。注册的好处是换设备时用账号密码就能拿回身份，比记一串口令方便。',
+      }),
+      el('div', { class: 'account-actions' }, [
+        el('button', {
+          class: 'primary-btn', type: 'button', text: '注册账号',
+          onclick: () => { $('#meOverlay').hidden = true; openAuth('register'); },
+        }),
+        el('button', {
+          class: 'ghost-btn', type: 'button', text: '已有账号，去登录',
+          onclick: () => { $('#meOverlay').hidden = true; openAuth('login'); },
+        }),
+      ]),
+    );
+  }
+}
+
+/* ------------------------------------------------------------ 管理后台 */
+
+async function openAdmin() {
+  state.adminTab = 'users';
+  $('#adminOverlay').hidden = false;
+  $('#adminSearch').value = '';
+  await refreshAdmin();
+}
+
+async function refreshAdmin() {
+  const isUsers = state.adminTab === 'users';
+  $('#tabUsers').setAttribute('aria-selected', String(isUsers));
+  $('#tabPosts').setAttribute('aria-selected', String(!isUsers));
+  $('#adminSearch').hidden = !isUsers;
+
+  try {
+    const overview = await api('/api/admin/overview');
+    const s = overview.stats;
+    $('#adminStats').replaceChildren(...[
+      ['用户', s.users], ['已注册', s.registered], ['在线', s.online],
+      ['帖子', s.posts], ['已锁定', s.locked], ['消息', s.messages], ['封禁', s.banned],
+    ].map(([label, value]) => el('div', { class: 'stat' }, [
+      el('b', { text: String(value) }),
+      el('span', { text: label }),
+    ])));
+
+    if (isUsers) await renderAdminUsers();
+    else await renderAdminPosts();
+  } catch (err) { toast(err.message); }
+}
+
+async function renderAdminUsers() {
+  const q = $('#adminSearch').value.trim();
+  const data = await api(`/api/admin/users?q=${encodeURIComponent(q)}`);
+  const list = $('#adminList');
+  list.replaceChildren();
+  if (!data.users.length) {
+    list.append(el('div', { class: 'empty-col', text: '没有匹配的用户' }));
+    return;
+  }
+  for (const u of data.users) {
+    const row = el('div', { class: `admin-row${u.banned ? ' banned' : ''}` }, [
+      avatarWithPresence(u, u.online),
+      el('div', { class: 'grow' }, [
+        el('b', { text: u.nick }),
+        el('small', { text: `#${u.tag}${u.username ? ` · @${u.username}` : ' · 匿名'} · ${u.posts} 帖` }),
+      ]),
+      u.admin ? el('span', { class: 'badge lock', text: '管理员' }) : null,
+      u.banned ? el('span', { class: 'badge done', text: '已封禁' }) : null,
+    ]);
+
+    if (u.uid !== state.me.uid) {
+      row.append(el('button', {
+        class: 'ghost-btn', type: 'button', text: u.banned ? '解封' : '封禁',
+        onclick: async () => {
+          if (!u.banned && !confirm(`封禁 ${u.nick}？封禁后 ta 无法发帖和发言。`)) return;
+          try {
+            await api(`/api/admin/users/${u.uid}/ban`, {
+              method: 'POST', body: JSON.stringify({ banned: !u.banned }),
+            });
+            refreshAdmin();
+          } catch (err) { toast(err.message); }
+        },
+      }));
+      row.append(el('button', {
+        class: 'ghost-btn', type: 'button', text: u.admin ? '取消管理员' : '设为管理员',
+        onclick: async () => {
+          try {
+            await api(`/api/admin/users/${u.uid}/role`, {
+              method: 'POST', body: JSON.stringify({ role: u.admin ? 'user' : 'admin' }),
+            });
+            refreshAdmin();
+          } catch (err) { toast(err.message); }
+        },
+      }));
+    }
+    list.append(row);
+  }
+}
+
+async function renderAdminPosts() {
+  const data = await api('/api/admin/posts');
+  const list = $('#adminList');
+  list.replaceChildren();
+  if (!data.posts.length) {
+    list.append(el('div', { class: 'empty-col', text: '还没有帖子' }));
+    return;
+  }
+  for (const p of data.posts) {
+    const stateMeta = state.meta.states.find((s) => s.id === p.state);
+    list.append(el('div', { class: 'admin-row' }, [
+      el('div', { class: 'grow' }, [
+        el('b', { text: p.title }),
+        el('small', { text: `${p.host.nick} #${p.host.tag} · ${p.memberCount} 人 · ${p.messageCount} 条消息 · ${timeAgo(p.updatedAt)}` }),
+      ]),
+      stateMeta ? el('span', { class: `badge ${p.state}`, text: stateMeta.label }) : null,
+      el('button', {
+        class: 'ghost-btn', type: 'button', text: '查看',
+        onclick: () => { $('#adminOverlay').hidden = true; openDetail(p.id); },
+      }),
+      el('button', {
+        class: 'ghost-btn', type: 'button', text: p.locked ? '解锁' : '锁定',
+        onclick: async () => {
+          try {
+            await api(`/api/posts/${p.id}`, {
+              method: 'PATCH', body: JSON.stringify({ locked: !p.locked }),
+            });
+            refreshAdmin();
+          } catch (err) { toast(err.message); }
+        },
+      }),
+      el('button', {
+        class: 'ghost-btn danger', type: 'button', text: '删除',
+        onclick: async () => {
+          if (!confirm(`删除「${p.title}」？聊天记录也会一起消失。`)) return;
+          try {
+            await api(`/api/posts/${p.id}`, { method: 'DELETE' });
+            toast('已删除');
+            refreshAdmin();
+            loadBoard();
+          } catch (err) { toast(err.message); }
+        },
+      }),
+    ]));
+  }
+}
+
 /* -------------------------------------------------------------- 我的身份 */
 
 function renderMe() {
@@ -749,6 +990,10 @@ function renderMe() {
   $('#meAvatar').textContent = state.me.emoji;
   $('#meAvatar').style.background = state.me.color;
   $('#meNick').textContent = state.me.nick;
+  // 管理后台入口和登录按钮都跟着当前身份走
+  $('#adminBtn').hidden = !state.me.admin;
+  $('#authBtn').hidden = Boolean(state.me.username);
+  renderAccountBox();
 }
 
 const EMOJI_CHOICES = ['🙂', '🏀', '🏸', '🎬', '🍜', '📚', '🎮', '🧋', '🐱', '🐶', '🐼', '🦊', '🐧', '🎧', '🚴', '⛰️', '🎤', '🧃'];
@@ -853,6 +1098,18 @@ function bindUi() {
   $('#createBtn').onclick = openCreate;
   $('#meBtn').onclick = openMe;
   $('#createForm').onsubmit = submitCreate;
+
+  $('#authBtn').onclick = () => openAuth('login');
+  $('#authForm').onsubmit = submitAuth;
+  $('#tabLogin').onclick = () => { state.authMode = 'login'; $('#authErr').textContent = ''; renderAuthMode(); };
+  $('#tabRegister').onclick = () => { state.authMode = 'register'; $('#authErr').textContent = ''; renderAuthMode(); };
+
+  $('#adminBtn').onclick = openAdmin;
+  $('#tabUsers').onclick = () => { state.adminTab = 'users'; refreshAdmin(); };
+  $('#tabPosts').onclick = () => { state.adminTab = 'posts'; refreshAdmin(); };
+  $('#adminSearch').addEventListener('input', debounce(() => {
+    if (state.adminTab === 'users') renderAdminUsers().catch((err) => toast(err.message));
+  }, 280));
 
   $('#addOpt').onclick = () => {
     const input = $('#customOpt');

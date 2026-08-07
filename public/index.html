@@ -27,6 +27,8 @@
     </label>
     <button id="mineToggle" class="ghost-btn" type="button" aria-pressed="false">只看我的</button>
     <button id="createBtn" class="primary-btn" type="button">＋ 发起搭子</button>
+    <button id="adminBtn" class="ghost-btn" type="button" hidden>🛡️ 管理后台</button>
+    <button id="authBtn" class="ghost-btn" type="button">登录 / 注册</button>
     <button id="meBtn" class="me-chip" type="button" title="我的身份">
       <span class="avatar" id="meAvatar">🙂</span>
       <span class="me-nick" id="meNick">…</span>
@@ -179,6 +181,8 @@
       </div>
     </form>
 
+    <div class="account" id="accountBox"></div>
+
     <div class="recovery">
       <h3>换设备也保持同一个身份</h3>
       <p>身份口令相当于你的「随身学生证」。在别的浏览器粘贴它，就还是同一个你。</p>
@@ -188,6 +192,68 @@
         <button type="button" class="ghost-btn" id="restoreBtn">用口令找回身份</button>
       </div>
       <p class="tiny">生成新口令后，旧口令立即失效。</p>
+    </div>
+  </section>
+</div>
+
+<!-- ============ 登录 / 注册 ============ -->
+<div class="overlay" id="authOverlay" hidden>
+  <section class="sheet form-sheet narrow-sheet" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+    <header class="sheet-head">
+      <div class="sheet-head-main">
+        <h2 id="authTitle">登录 / 注册</h2>
+        <div class="sheet-sub" id="authSub"></div>
+      </div>
+      <button class="icon-btn" data-close type="button" aria-label="关闭">✕</button>
+    </header>
+
+    <div class="tabs" role="tablist">
+      <button class="tab" id="tabLogin" type="button" role="tab" aria-selected="true">登录</button>
+      <button class="tab" id="tabRegister" type="button" role="tab" aria-selected="false">注册</button>
+    </div>
+
+    <form id="authForm" class="form">
+      <label class="field">
+        <span>用户名</span>
+        <input name="username" maxlength="20" required autocomplete="username" placeholder="3-20 位，中英文均可">
+      </label>
+      <label class="field">
+        <span>密码</span>
+        <input name="password" type="password" maxlength="128" required autocomplete="current-password" placeholder="至少 6 位">
+      </label>
+      <p class="field-hint" id="authHint"></p>
+      <div class="form-actions">
+        <span class="form-err" id="authErr"></span>
+        <button type="submit" class="primary-btn" id="authSubmit">登录</button>
+      </div>
+    </form>
+  </section>
+</div>
+
+<!-- ============ 管理后台 ============ -->
+<div class="overlay" id="adminOverlay" hidden>
+  <section class="sheet admin-sheet" role="dialog" aria-modal="true" aria-labelledby="adminTitle">
+    <header class="sheet-head">
+      <div class="sheet-head-main">
+        <h2 id="adminTitle">🛡️ 管理后台</h2>
+        <div class="sheet-sub" id="adminSub">封禁用户、设置管理员、下架帖子</div>
+      </div>
+      <button class="icon-btn" data-close type="button" aria-label="关闭">✕</button>
+    </header>
+
+    <div class="stat-row" id="adminStats"></div>
+
+    <div class="tabs" role="tablist">
+      <button class="tab" id="tabUsers" type="button" role="tab" aria-selected="true">用户</button>
+      <button class="tab" id="tabPosts" type="button" role="tab" aria-selected="false">帖子</button>
+    </div>
+
+    <div class="admin-body">
+      <label class="search admin-search">
+        <span aria-hidden="true">🔎</span>
+        <input id="adminSearch" type="search" placeholder="搜昵称 / 用户名 / ID" autocomplete="off">
+      </label>
+      <div id="adminList" class="admin-list"></div>
     </div>
   </section>
 </div>

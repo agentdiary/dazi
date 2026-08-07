@@ -7,7 +7,8 @@
 （篮球 / 羽毛球 / 看电影 / 火锅 / 自习…），报名的人各自投自己想去的那个；
 每张卡片内部自带**聊天室**并显示谁在线；发起人可以随时**把帖子锁住，不让别人进来**。
 
-**免注册、免密码**——打开就能发言，但身份由服务器签发并全站保持统一。
+**默认免注册、免密码**——打开就能发言，身份由服务器签发并全站保持统一；
+需要时再注册账号（绑定到同一个身份），也可以一键切成**强制登录**。带完整的**管理后台**。
 
 ---
 
@@ -80,6 +81,38 @@
 - 锁帖时可以选择设一个**暗号**，知道暗号的人仍然能进来（不设则彻底关门）；
 - 随时可以解锁。
 
+### 账号：注册是可选的，也可以强制
+
+注册**不是新建一个人**，而是给当前这个匿名身份绑定用户名和密码——
+注册前发的帖子、说过的话、攒下的 `#短号` 全都继承过来，不会分裂成两个身份。
+
+| 模式 | 怎么开 | 效果 |
+| --- | --- | --- |
+| 免注册（默认） | 什么都不用配 | 打开就能发言；注册只是多一种换设备找回身份的方式 |
+| 强制登录 | `DAZI_REQUIRE_LOGIN=1` | 浏览照常开放，但发帖 / 加入 / 发言都必须先注册登录 |
+
+密码用 scrypt 加盐哈希，比对走 `timingSafeEqual`；登录失败时不区分
+「用户名不存在」和「密码错误」，且用户名不存在时同样跑一次哈希，
+避免用响应快慢反推账号是否存在。登录接口按用户名限流 10 次 / 10 分钟。
+
+### 管理员
+
+用环境变量引导第一个管理员，启动时自动创建（账号已存在则提升为管理员并重设密码，
+这也是忘记密码时的找回手段）：
+
+```bash
+sudo DAZI_ADMIN_USER=admin DAZI_ADMIN_PASS=一个够长的密码 bash deploy/install.sh
+```
+
+登录后顶栏出现「🛡️ 管理后台」：
+
+- **概览**：用户数、已注册数、在线数、帖子数、锁定数、消息数、封禁数
+- **用户**：搜索、封禁 / 解封、设为管理员 / 取消管理员
+- **帖子**：查看、锁定 / 解锁、删除；也能删掉单条违规消息
+
+被封禁的人仍可浏览，但发帖、加入、发言一律拒绝，并且无法登录。
+两条防呆：不能封禁自己，也不能把最后一个管理员降权（否则后台就再也进不去了）。
+
 ### 免注册，但身份统一
 
 | 做法 | 效果 |
@@ -102,13 +135,14 @@ server/
   api.js        REST 路由、限流、权限校验
   posts.js      帖子领域逻辑：状态计算、排序、锁帖判定、序列化（锁帖时在此裁掉敏感字段）
   identity.js   免注册身份：HMAC Cookie、昵称唯一、身份口令
+  auth.js       账号体系：scrypt 密码、注册绑定、登录、管理员与封禁
   realtime.js   SSE 推送（首页频道 + 每个帖子一个频道）
   presence.js   在线判定 + 帖子内停留时长打点累加
   notify.js     「停留够久且发过言」的提醒规则与邮件内容
   mailer.js     手写的极简 SMTP 客户端（隐式 TLS / STARTTLS）
   store.js      JSON 持久化，防抖 + 原子写
 public/         前端（原生 JS / CSS，无框架）
-test/smoke.js   68 项端到端冒烟测试（含用假 SMTP 服务器跑通的真实发信链路）
+test/smoke.js   116 项端到端冒烟测试（含真实 SMTP 链路与强制登录模式）
 deploy/         一键部署脚本
 ```
 
@@ -122,7 +156,7 @@ deploy/         一键部署脚本
 git clone https://github.com/agentdiary/dazi.git
 cd dazi
 npm start          # 默认 http://127.0.0.1:8080
-npm run smoke      # 跑一遍端到端测试（68 项）
+npm run smoke      # 跑一遍端到端测试（116 项）
 ```
 
 需要 Node.js ≥ 18，不需要 `npm install`。
@@ -240,6 +274,9 @@ sudo DAZI_SMTP_HOST=smtp.qq.com \
 | `DAZI_DUCKDNS_DOMAIN` | 空 | DuckDNS 子域名，填了就用它换掉 sslip.io |
 | `DAZI_DUCKDNS_TOKEN` | 空 | DuckDNS 的 token |
 | `DAZI_SITE_URL` | `https://<域名>` | 提醒邮件里链接用的站点地址，由脚本自动写入 |
+| `DAZI_ADMIN_USER` | 空 | 管理员用户名，启动时自动创建或提升 |
+| `DAZI_ADMIN_PASS` | 空 | 管理员密码，和上一项一起用 |
+| `DAZI_REQUIRE_LOGIN` | `0` | 设为 `1` 则必须注册登录才能发帖 / 发言 |
 
 ### 自动部署（GitHub Actions）
 
@@ -266,6 +303,16 @@ cp /var/lib/dazi/dazi.json ~/  # 备份全部数据
 | --- | --- | --- |
 | GET | `/api/meta` | 分类、招募状态、排序方式、预设项目、限制、提醒规则 |
 | GET | `/api/me` | 取当前身份（没有则当场签发） |
+| POST | `/api/auth/register` | 给当前身份绑定账号密码 |
+| POST | `/api/auth/login` | 登录，把本浏览器指向该账号 |
+| POST | `/api/auth/logout` | 退出，回到新的匿名身份 |
+| POST | `/api/auth/password` | 改密码（校验原密码） |
+| GET | `/api/admin/overview` | 管理员：站点概览 |
+| GET | `/api/admin/users` | 管理员：用户列表，支持 `q` |
+| POST | `/api/admin/users/:uid/ban` | 管理员：封禁 / 解封 |
+| POST | `/api/admin/users/:uid/role` | 管理员：设为 / 取消管理员 |
+| GET | `/api/admin/posts` | 管理员：帖子列表 |
+| DELETE | `/api/admin/posts/:id/messages/:msgId` | 管理员：删除单条消息 |
 | PATCH | `/api/me` | 改昵称 / 头像 / 底色 / 提醒邮箱（昵称唯一） |
 | POST | `/api/me/recovery` | 重新生成身份口令 |
 | POST | `/api/session/restore` | 用身份口令在新设备上找回身份 |
@@ -292,7 +339,9 @@ cp /var/lib/dazi/dazi.json ~/  # 备份全部数据
 - 所有写操作校验发起人 / 成员身份；
 - 发帖 10 条/小时、发言 20 条/分钟的限流；
 - 前端一律用 `textContent` 渲染用户输入，不拼 HTML；
-- 提醒邮箱只存服务端，`publicUser` 不含该字段，任何接口都不会把它返回给别人；
+- 提醒邮箱与用户名只存服务端，`publicUser` 不含这些字段，接口不会返回给别人；
+- 密码用 scrypt 加盐哈希，`timingSafeEqual` 比对，哈希从不出现在任何响应里；
+- 管理接口统一在入口校验 `role === 'admin'`，匿名和普通用户一律 403；
 - SMTP 凭据放 `/etc/dazi.env`（600），不写进所有人可读的 systemd unit；
 - 静态文件服务做了目录穿越防护；
 - systemd 以专用账号运行，`ProtectSystem=strict`，只有数据目录可写。

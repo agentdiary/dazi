@@ -3,12 +3,13 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { PORT, HOST, PUBLIC_DIR } = require('./config');
+const { PORT, HOST, PUBLIC_DIR, REQUIRE_LOGIN } = require('./config');
 const store = require('./store');
 const api = require('./api');
 const presence = require('./presence');
 const notify = require('./notify');
 const mailer = require('./mailer');
+const auth = require('./auth');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -87,10 +88,16 @@ store.load();
 // 每 30 秒结算一次各房间的停留时长，顺带检查有没有该给发起人发提醒的
 presence.startTicking(() => notify.sweep());
 
-server.listen(PORT, HOST, () => {
-  console.log(`[dazi] 校园搭子 running on http://${HOST}:${PORT}`);
-  console.log(`[dazi] 邮件提醒：${mailer.enabled() ? `已启用（${process.env.DAZI_SMTP_HOST}）` : '未配置 SMTP，仅站内提醒'}`);
-});
+// 管理员账号按环境变量准备好之后再开始接收请求，避免刚启动时后台进不去
+auth.bootstrapAdmin()
+  .catch((err) => console.error('[dazi] 管理员账号初始化失败', err))
+  .then(() => {
+    server.listen(PORT, HOST, () => {
+      console.log(`[dazi] 校园搭子 running on http://${HOST}:${PORT}`);
+      console.log(`[dazi] 发言权限：${REQUIRE_LOGIN ? '需登录后才能发言' : '匿名即可发言（免注册）'}`);
+      console.log(`[dazi] 邮件提醒：${mailer.enabled() ? `已启用（${process.env.DAZI_SMTP_HOST}）` : '未配置 SMTP，仅站内提醒'}`);
+    });
+  });
 
 function shutdown(signal) {
   console.log(`[dazi] ${signal} received, saving data...`);

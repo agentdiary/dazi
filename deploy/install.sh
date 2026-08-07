@@ -252,13 +252,16 @@ if [[ -n "${DAZI_SMTP_USER:-}" && ! "${DAZI_SMTP_USER}" =~ ^[A-Za-z0-9._%+-]+@[A
 fi
 
 log "写入环境文件 ${ENV_FILE}"
-if [[ -f "$ENV_FILE" && -z "${DAZI_SMTP_HOST:-}" ]]; then
+if [[ -f "$ENV_FILE" && -z "${DAZI_SMTP_HOST:-}" && -z "${DAZI_ADMIN_USER:-}" && -z "${DAZI_REQUIRE_LOGIN:-}" ]]; then
   # 重复部署且这次没给 SMTP 参数：保留上次配好的，只更新站点地址
   sed -i "/^DAZI_SITE_URL=/d" "$ENV_FILE"
   echo "DAZI_SITE_URL=${SCHEME}://${DOMAIN}" >> "$ENV_FILE"
 else
   {
     echo "DAZI_SITE_URL=${SCHEME}://${DOMAIN}"
+    [[ -n "${DAZI_REQUIRE_LOGIN:-}" ]]  && echo "DAZI_REQUIRE_LOGIN=${DAZI_REQUIRE_LOGIN}"
+    [[ -n "${DAZI_ADMIN_USER:-}" ]]     && echo "DAZI_ADMIN_USER=${DAZI_ADMIN_USER}"
+    [[ -n "${DAZI_ADMIN_PASS:-}" ]]     && echo "DAZI_ADMIN_PASS=${DAZI_ADMIN_PASS}"
     [[ -n "${DAZI_SMTP_HOST:-}" ]]      && echo "DAZI_SMTP_HOST=${DAZI_SMTP_HOST}"
     [[ -n "${DAZI_SMTP_PORT:-}" ]]      && echo "DAZI_SMTP_PORT=${DAZI_SMTP_PORT}"
     [[ -n "${DAZI_SMTP_USER:-}" ]]      && echo "DAZI_SMTP_USER=${DAZI_SMTP_USER}"
@@ -274,6 +277,17 @@ if grep -q '^DAZI_SMTP_HOST=' "$ENV_FILE"; then
   log "邮件提醒：已配置 $(sed -n 's/^DAZI_SMTP_HOST=//p' "$ENV_FILE")"
 else
   log "邮件提醒：未配置 SMTP（站内提醒照常工作）"
+fi
+if grep -q '^DAZI_ADMIN_USER=' "$ENV_FILE"; then
+  log "管理员账号：$(sed -n 's/^DAZI_ADMIN_USER=//p' "$ENV_FILE")"
+else
+  warn "还没有设置管理员账号，后台无人可进。可用："
+  warn "  sudo DAZI_ADMIN_USER=admin DAZI_ADMIN_PASS=<你的密码> bash deploy/install.sh"
+fi
+if grep -q '^DAZI_REQUIRE_LOGIN=1' "$ENV_FILE"; then
+  log "发言权限：需登录后才能发言"
+else
+  log "发言权限：匿名即可发言（免注册）"
 fi
 
 log "写入 systemd 服务"

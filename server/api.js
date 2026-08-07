@@ -7,7 +7,8 @@ const P = require('./posts');
 const presence = require('./presence');
 const notify = require('./notify');
 const mailer = require('./mailer');
-const { LIMITS } = require('./config');
+const auth = require('./auth');
+const { LIMITS, REQUIRE_LOGIN } = require('./config');
 
 /* ---------------------------------------------------------------- 基础工具 */
 
@@ -74,6 +75,24 @@ setInterval(() => {
   }
 }, 600_000).unref();
 
+/* --------------------------------------------------------- 写权限守卫 */
+
+/**
+ * 所有「写」操作的统一入口检查：封禁优先于一切，其次是强制登录开关。
+ * 返回 true 表示已经写过响应，调用方应立即 return。
+ */
+function blockedFromWriting(res, user) {
+  if (user.banned) {
+    fail(res, 403, '你的账号已被管理员封禁，无法发帖或发言');
+    return true;
+  }
+  if (REQUIRE_LOGIN && !user.username) {
+    fail(res, 401, '本站已开启「登录后才能发言」，请先注册或登录');
+    return true;
+  }
+  return false;
+}
+
 /* ------------------------------------------------------------ 广播助手 */
 
 function broadcastCard(post) {
@@ -101,6 +120,8 @@ async function handle(req, res, url) {
       presetOptions: P.PRESET_OPTIONS,
       limits: LIMITS,
       mailEnabled: mailer.enabled(),
+      requireLogin: REQUIRE_LOGIN,
+      usernameRule: { min: 3, max: 20, passwordMin: auth.PASSWORD_MIN },
       notifyRule: {
         dwellMinutes: Math.round(notify.DWELL_THRESHOLD_MS / 60000),
         minMessages: notify.MIN_MESSAGES,
@@ -151,6 +172,59 @@ async function handle(req, res, url) {
     // 昵称/头像变了，看板与聊天里的历史署名也要跟着变（身份统一）。
     rt.publish(rt.boardChannel(), 'user:update', { uid: user.uid });
     return ok(res, { user: identity.selfUser(user) });
+  }
+
+  /* --- 注册 / 登录 --- */
+
+  if (path === '/api/auth/register' && method === 'POST') {
+    const me = identity.identify(req, res);
+    if (!rateLimit(`register:${me.user.uid}`, 5, 3600_000)) {
+      return fail(res, 429, '尝试太频繁了，过会儿再试');
+    }
+    const body = await readBody(req);
+    // 注册是把账号绑到当前这个匿名身份上，原有帖子和发言都跟着走
+    const result = await auth.register(me.user, body.username, body.password);
+    if (result.error) return fail(res, 400, result.error);
+    rt.publish(rt.boardChannel(), 'user:update', { uid: me.user.uid });
+    return ok(res, { user: identity.selfUser(result.user) });
+  }
+
+  if (path === '/api/auth/login' && method === 'POST') {
+    const body = await readBody(req);
+    const key = auth.normalizeUsername(body.username || '');
+    if (!rateLimit(`login:${key}`, 10, 600_000)) {
+      return fail(res, 429, '登录尝试过多，请十分钟后再试');
+    }
+    const result = await auth.login(body.username, body.password);
+    if (result.error) return fail(res, 401, result.error);
+    // 登录 = 把这个浏览器的身份 Cookie 指向该账号
+    identity.setIdentityCookie(res, result.user.uid, identity.isSecureRequest(req));
+    result.user.lastSeen = Date.now();
+    store.save();
+    return ok(res, { user: identity.selfUser(result.user) });
+  }
+
+  if (path === '/api/auth/logout' && method === 'POST') {
+    // 退出后回到一个全新的匿名身份，这样还能继续浏览和（未开强制登录时）发言
+    const { user } = identity.createUser();
+    identity.setIdentityCookie(res, user.uid, identity.isSecureRequest(req));
+    return ok(res, { user: identity.selfUser(user) });
+  }
+
+  if (path === '/api/auth/password' && method === 'POST') {
+    const me = identity.identify(req, res);
+    const body = await readBody(req);
+    const result = await auth.changePassword(me.user, body.oldPassword, body.newPassword);
+    if (result.error) return fail(res, 400, result.error);
+    return ok(res, { user: identity.selfUser(result.user) });
+  }
+
+  /* --- 管理员 --- */
+
+  if (path.startsWith('/api/admin/')) {
+    const me = identity.identify(req, res);
+    if (!auth.isAdmin(me.user)) return fail(res, 403, '需要管理员权限');
+    return handleAdmin(req, res, url, path, method, me.user);
   }
 
   if (path === '/api/me/recovery' && method === 'POST') {
@@ -216,6 +290,7 @@ async function handle(req, res, url) {
   if (path === '/api/posts' && method === 'POST') {
     const me = identity.identify(req, res);
     const uid = me.user.uid;
+    if (blockedFromWriting(res, me.user)) return;
     if (!rateLimit(`post:${uid}`, LIMITS.postsPerUserPerHour, 3600_000)) {
       return fail(res, 429, '发帖太频繁啦，休息一下再来');
     }
@@ -324,6 +399,100 @@ async function handle(req, res, url) {
   return fail(res, 404, '接口不存在');
 }
 
+/* ------------------------------------------------------------ 管理后台 */
+
+async function handleAdmin(req, res, url, path, method, admin) {
+  const db = store.data();
+
+  if (path === '/api/admin/overview' && method === 'GET') {
+    return ok(res, {
+      stats: { ...auth.overview(), online: presence.onlineCount() },
+      mailEnabled: mailer.enabled(),
+      requireLogin: REQUIRE_LOGIN,
+      usernameRule: { min: 3, max: 20, passwordMin: auth.PASSWORD_MIN },
+      requireLogin: REQUIRE_LOGIN,
+    });
+  }
+
+  if (path === '/api/admin/users' && method === 'GET') {
+    const q = (url.searchParams.get('q') || '').trim().toLowerCase();
+    const users = Object.values(db.users)
+      .filter((u) => {
+        if (!q) return true;
+        return `${u.nick} ${u.username || ''} ${u.uid}`.toLowerCase().includes(q);
+      })
+      .sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0))
+      .slice(0, 200)
+      .map((u) => ({
+        ...identity.publicUser(u),
+        username: u.username || '',
+        banned: Boolean(u.banned),
+        createdAt: u.createdAt,
+        lastSeen: u.lastSeen,
+        online: presence.isOnline(u.uid),
+        posts: Object.values(db.posts).filter((p) => p.hostId === u.uid).length,
+      }));
+    return ok(res, { users });
+  }
+
+  const userMatch = path.match(/^\/api\/admin\/users\/([a-f0-9]{4,32})\/(ban|role)$/);
+  if (userMatch && method === 'POST') {
+    const target = db.users[userMatch[1]];
+    if (!target) return fail(res, 404, '找不到这个用户');
+    if (target.uid === admin.uid) return fail(res, 400, '不能对自己执行这个操作');
+    const body = await readBody(req);
+
+    if (userMatch[2] === 'ban') {
+      target.banned = Boolean(body.banned);
+    } else {
+      const role = body.role === 'admin' ? 'admin' : 'user';
+      if (role === 'user' && target.role === 'admin') {
+        // 别把最后一个管理员降权，否则后台就再也进不去了
+        const admins = Object.values(db.users).filter((u) => u.role === 'admin');
+        if (admins.length <= 1) return fail(res, 400, '至少要保留一个管理员');
+      }
+      target.role = role;
+    }
+    store.save();
+    rt.publish(rt.boardChannel(), 'user:update', { uid: target.uid });
+    return ok(res, { user: identity.publicUser(target), banned: Boolean(target.banned) });
+  }
+
+  if (path === '/api/admin/posts' && method === 'GET') {
+    const posts = Object.values(db.posts)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, 200)
+      .map((post) => ({
+        id: post.id,
+        title: post.title,
+        state: P.stateOf(post),
+        locked: post.locked,
+        host: identity.publicUser(db.users[post.hostId]),
+        memberCount: P.memberCount(post),
+        messageCount: post.messages.length,
+        createdAt: post.createdAt,
+        updatedAt: post.updatedAt,
+      }));
+    return ok(res, { posts });
+  }
+
+  const msgMatch = path.match(/^\/api\/admin\/posts\/([a-f0-9]{6,32})\/messages\/([a-f0-9]{6,32})$/);
+  if (msgMatch && method === 'DELETE') {
+    const post = db.posts[msgMatch[1]];
+    if (!post) return fail(res, 404, '帖子不存在');
+    const index = post.messages.findIndex((m) => m.id === msgMatch[2]);
+    if (index < 0) return fail(res, 404, '消息不存在');
+    post.messages.splice(index, 1);
+    P.systemMessage(post, '一条消息被管理员删除了');
+    post.updatedAt = Date.now();
+    store.save();
+    broadcastPost(post, 'post:update', { postId: post.id });
+    return ok(res, { deleted: true });
+  }
+
+  return fail(res, 404, '接口不存在');
+}
+
 /* --------------------------------------------------- 单帖子的各类操作 */
 
 async function handlePost(req, res, url, post, action, method) {
@@ -338,7 +507,9 @@ async function handlePost(req, res, url, post, action, method) {
 
   /* 发起人编辑：改信息 / 锁帖 / 完成 */
   if (action === '' && method === 'PATCH') {
-    if (!P.isHost(post, uid)) return fail(res, 403, '只有发起人可以修改这个帖子');
+    if (!P.isHost(post, uid) && !auth.isAdmin(me.user)) {
+      return fail(res, 403, '只有发起人可以修改这个帖子');
+    }
     const body = await readBody(req);
 
     if (typeof body.title === 'string') {
@@ -391,7 +562,9 @@ async function handlePost(req, res, url, post, action, method) {
 
   /* 删除 */
   if (action === '' && method === 'DELETE') {
-    if (!P.isHost(post, uid)) return fail(res, 403, '只有发起人可以删除这个帖子');
+    if (!P.isHost(post, uid) && !auth.isAdmin(me.user)) {
+      return fail(res, 403, '只有发起人可以删除这个帖子');
+    }
     delete db.posts[post.id];
     store.save();
     rt.publish(rt.boardChannel(), 'board:remove', { postId: post.id });
@@ -401,6 +574,7 @@ async function handlePost(req, res, url, post, action, method) {
 
   /* 报名加入（并选择自己想参加的项目） */
   if (action === '/join' && method === 'POST') {
+    if (blockedFromWriting(res, me.user)) return;
     const body = await readBody(req);
     if (P.isMember(post, uid)) return ok(res, { post: P.serializeDetail(post, uid) });
     if (post.status === 'done') return fail(res, 409, '这个局已经结束啦');
@@ -441,6 +615,7 @@ async function handlePost(req, res, url, post, action, method) {
 
   /* 改投别的项目 */
   if (action === '/vote' && method === 'POST') {
+    if (blockedFromWriting(res, me.user)) return;
     const body = await readBody(req);
     if (!P.isMember(post, uid)) return fail(res, 403, '先加入这个局才能选项目');
     if (!post.options.some((o) => o.id === body.optionId)) return fail(res, 400, '没有这个选项');
@@ -454,6 +629,7 @@ async function handlePost(req, res, url, post, action, method) {
 
   /* 帖子内聊天 */
   if (action === '/messages' && method === 'POST') {
+    if (blockedFromWriting(res, me.user)) return;
     if (!P.canEnter(post, uid)) return fail(res, 403, '帖子已被锁定，你现在进不去');
     if (post.status === 'done' && !P.isMember(post, uid)) return fail(res, 409, '这个局已经结束了');
     if (!rateLimit(`msg:${uid}`, LIMITS.messagesPerMinute, 60_000)) {
@@ -479,7 +655,9 @@ async function handlePost(req, res, url, post, action, method) {
 
   /* 发起人移出成员 */
   if (action === '/kick' && method === 'POST') {
-    if (!P.isHost(post, uid)) return fail(res, 403, '只有发起人可以移出成员');
+    if (!P.isHost(post, uid) && !auth.isAdmin(me.user)) {
+      return fail(res, 403, '只有发起人可以移出成员');
+    }
     const body = await readBody(req);
     const target = String(body.uid || '');
     if (!P.isMember(post, target) || target === uid) return fail(res, 400, '找不到这个成员');

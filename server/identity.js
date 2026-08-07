@@ -220,26 +220,33 @@ function publicUser(user) {
     emoji: user.emoji,
     color: user.color,
     tag: shortId(user.uid),
+    // 注册与管理员是公开事实（要在帖子里显示徽标），用户名和密码不是
+    registered: Boolean(user.username),
+    admin: user.role === 'admin',
   };
 }
 
-/** 只返回给本人的信息，比 publicUser 多了邮箱等私有字段。 */
+/** 只返回给本人的信息，比 publicUser 多了用户名、邮箱等私有字段。 */
 function selfUser(user) {
   return {
     ...publicUser(user),
+    username: user.username || '',
     email: user.email || '',
     notifyEmail: user.notifyEmail !== false,
+    banned: Boolean(user.banned),
   };
 }
 
 module.exports = {
   identify,
   restore,
+  createUser,
+  setIdentityCookie,
+  isSecureRequest,
   rotateRecovery,
   publicUser,
   selfUser,
   nickTaken,
   normalizeNick,
   shortId,
-  isSecureRequest,
 };
