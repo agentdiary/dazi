@@ -1240,6 +1240,9 @@ function syncTopbarLayout() {
   const lang = $('#langBtn');
   if (!bar || !brand || !tools || !lang) return;
 
+  // 先统一放回顶栏，保证每次测量的基准一致（在品牌内部时它会被算进品牌宽度）
+  if (lang.parentElement !== bar) bar.appendChild(lang);
+
   // 关掉换行和伸缩，量出三块内容各自的自然宽度。
   // 不用 scrollWidth：内容没超宽时它等于 clientWidth，看不出实际占了多少。
   bar.classList.add('measuring');
@@ -1254,6 +1257,11 @@ function syncTopbarLayout() {
 
   // 留 2px 余量，避免卡在边界上时判断和实际布局差半个像素
   const fitsOneLine = needed <= bar.getBoundingClientRect().width - 2;
+
+  // 一行放得下：留在顶栏末尾，落在整行的右端。
+  // 放不下：塞进品牌容器内部——手机开大字体时品牌自己就撑满一行，
+  // 只是排在它「后面」仍会被挤到第二行，放进去才跑不掉。
+  if (!fitsOneLine) brand.appendChild(lang);
   document.body.classList.toggle('topbar-wrapped', !fitsOneLine);
 }
 

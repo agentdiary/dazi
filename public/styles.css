@@ -162,25 +162,22 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .filter-end { position: relative; flex: 0 0 auto; }
 
 /*
- * 语言按钮始终待在「校园搭子*莫纳什」那一行的右端：
- * 宽屏整个顶栏就是一行，所以排到最后（order 3）落在行尾；
- * 窄屏工具区会换行，让它紧跟品牌（order 1），和标题同处第一行的右端。
+ * 语言按钮始终待在「校园搭子*莫纳什」那一行的右端。
+ * 放在顶栏末尾还是塞进品牌容器内部，由 syncTopbarLayout() 按实际宽度决定。
  */
 .lang-btn {
   font-size: 12.5px;
   padding: 7px 12px;
   letter-spacing: .3px;
   flex: 0 0 auto;
+  /* 无论挂在顶栏末尾还是品牌内部，都靠右 */
+  margin-left: auto;
+  /* 作为顶栏的直接子元素时排到最后，落在整行的右端；
+     嵌进品牌容器后它本就是最后一个子元素，这条不起作用也无妨 */
   order: 3;
 }
-.topbar-tools { order: 2; }
-
-/*
- * 语言按钮永远待在「校园搭子*莫纳什」那一行的右端。
- * 换行点取决于工具区的文字宽度——中英文标签不一样长，字体和缩放也会变，
- * 所以不能写死断点：由 syncTopbarLayout() 实测是否换行后加这个 class。
- */
-body.topbar-wrapped .lang-btn { order: 1; margin-left: auto; }
+/* 标题要能被压缩/换行，否则它撑满一行后按钮就没地方站了 */
+.brand-text { min-width: 0; }
 
 /*
  * 测量用的临时状态：禁止换行、禁止伸缩，这样 scrollWidth 就是「一行摆开
@@ -678,6 +675,18 @@ body.topbar-wrapped .lang-btn { order: 1; margin-left: auto; }
 .switch { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-soft); cursor: pointer; }
 .switch input { width: 16px; height: 16px; accent-color: var(--accent); }
 .field-hint { font-size: 11.5px; color: var(--ink-faint); line-height: 1.6; }
+
+/* 手机（尤其开了系统大字号）上顶栏容易被撑成好几行，收紧间距和字号 */
+@media (max-width: 560px) {
+  .topbar { gap: 8px; padding: 10px 14px; }
+  .topbar-tools { gap: 6px; width: 100%; }
+  .search { flex: 1 1 140px; min-width: 0; padding: 6px 12px; }
+  .search input { width: 100%; min-width: 0; font-size: 14px; }
+  .primary-btn, .ghost-btn, .me-chip { padding: 6px 12px; font-size: 14px; }
+  .me-nick { max-width: 82px; }
+  .brand-mark { width: 32px; height: 32px; font-size: 16px; }
+  .brand-text strong { font-size: 15px; }
+}
 
 @media (max-width: 860px) {
   .detail-body { grid-template-columns: 1fr; }
