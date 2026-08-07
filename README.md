@@ -266,7 +266,19 @@ sudo DAZI_SMTP_HOST=smtp.qq.com \
 ```
 
 凭据会写进 `/etc/dazi.env`（权限 600），**不会**写进所有人可读的 systemd unit。
-重复部署时不带 SMTP 参数的话，脚本会保留上次配好的值。
+
+### 重复部署会沿用上次的设置
+
+域名、DuckDNS token、管理员账号、SMTP 凭据都记在 `/etc/dazi.env` 里。
+重跑时的规则统一是「这次给了就用新的，没给就沿用上次」，所以升级只要：
+
+```bash
+sudo bash deploy/install.sh
+```
+
+不会把站点悄悄换回默认域名。想换域名就显式传 `DAZI_DOMAIN=` 或
+`DAZI_DUCKDNS_DOMAIN=`，新值优先，并且显式指定普通域名时会自动停用
+之前记住的 DuckDNS（含那条定时刷新任务）。
 
 | 变量 | 说明 |
 | --- | --- |

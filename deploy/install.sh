@@ -32,6 +32,35 @@ die()  { printf '\033[1;31m错误:\033[0m %s\n' "$*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "请用 root 运行：sudo bash deploy/install.sh"
 
+# ------------------------------------------------------- 沿用上次的设置
+
+# 所有设置统一走「这次给了就用新的，没给就沿用上次」。
+# 之前只沿用了 SMTP 和管理员，域名没沿用，于是重跑一次不带参数的部署
+# 就把站点悄悄换回了默认的 sslip.io 域名——这里一次性解决这类问题。
+ENV_FILE=/etc/${APP_NAME}.env
+
+# 先记下这次命令行上真正传了什么，用来和「从文件恢复的旧值」区分开：
+# 显式指定的域名必须能盖掉上次记住的 DuckDNS，否则用过一次 DuckDNS
+# 就再也换不回普通域名了。
+EXPLICIT_DOMAIN="${DAZI_DOMAIN:-}"
+EXPLICIT_DUCKDNS="${DAZI_DUCKDNS_DOMAIN:-}"
+
+prev_setting() {
+  [[ -f "$ENV_FILE" ]] || return 0
+  sed -n "s/^$1=//p" "$ENV_FILE" | head -1
+}
+
+for key in DAZI_DOMAIN DAZI_DUCKDNS_DOMAIN DAZI_DUCKDNS_TOKEN DAZI_EMAIL \
+           DAZI_REQUIRE_LOGIN DAZI_ADMIN_USER DAZI_ADMIN_PASS \
+           DAZI_SMTP_HOST DAZI_SMTP_PORT DAZI_SMTP_USER DAZI_SMTP_PASS \
+           DAZI_SMTP_FROM DAZI_SMTP_FROM_NAME DAZI_SMTP_SECURE; do
+  if [[ -z "${!key:-}" ]]; then
+    value="$(prev_setting "$key")"
+    [[ -n "$value" ]] && export "$key=$value"
+  fi
+done
+unset key value
+
 # ---------------------------------------------------------------- 域名与端口
 
 # 云主机常常是 NAT 出网（网卡上只有内网地址），所以优先问外部服务要公网 IP。
@@ -95,7 +124,15 @@ CRON
   echo "${sub}.duckdns.org"
 }
 
-if [[ -n "${DAZI_DUCKDNS_DOMAIN:-}" && -n "${DAZI_DUCKDNS_TOKEN:-}" ]]; then
+if [[ -n "$EXPLICIT_DOMAIN" ]]; then
+  # 这次命令行上明确给了域名，优先级最高
+  DOMAIN="$EXPLICIT_DOMAIN"
+  if [[ -n "${DAZI_DUCKDNS_DOMAIN:-}" && -z "$EXPLICIT_DUCKDNS" ]]; then
+    log "这次显式指定了域名，停用上次记住的 DuckDNS 设置"
+    unset DAZI_DUCKDNS_DOMAIN DAZI_DUCKDNS_TOKEN
+    rm -f /etc/cron.d/${APP_NAME}-duckdns
+  fi
+elif [[ -n "${DAZI_DUCKDNS_DOMAIN:-}" && -n "${DAZI_DUCKDNS_TOKEN:-}" ]]; then
   DOMAIN="$(setup_duckdns)"
 else
   DOMAIN="${DAZI_DOMAIN:-${APP_NAME}.${PUBLIC_IP}.sslip.io}"
@@ -239,40 +276,33 @@ fi
 
 # ---------------------------------------------------------------- systemd
 
-# 站点地址 + SMTP 凭据单独放一个 600 的环境文件，不写进 systemd unit（unit 是所有人可读的）
-ENV_FILE=/etc/${APP_NAME}.env
+# 站点地址、域名与凭据统一放这个 600 的环境文件，不写进 systemd unit（unit 是所有人可读的）。
+# 上面已经把「没传就沿用上次」处理完了，这里直接照当前值写一份完整的。
 SCHEME=https
 [[ "${DAZI_SKIP_TLS:-0}" == "1" ]] && SCHEME=http
 
-if [[ -n "${DAZI_SMTP_USER:-}" && ! "${DAZI_SMTP_USER}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
-  die "DAZI_SMTP_USER「${DAZI_SMTP_USER}」不是一个合法邮箱地址。
-     看起来是示例里的占位符。QQ 邮箱请填完整地址（如 123456@qq.com），
-     密码填「SMTP 授权码」而不是登录密码：QQ邮箱 → 设置 → 账户 → 开启 SMTP → 生成授权码。
-     暂时不配邮件提醒的话，把 DAZI_SMTP_* 几个变量都去掉即可。"
-fi
-
 log "写入环境文件 ${ENV_FILE}"
-if [[ -f "$ENV_FILE" && -z "${DAZI_SMTP_HOST:-}" && -z "${DAZI_ADMIN_USER:-}" && -z "${DAZI_REQUIRE_LOGIN:-}" ]]; then
-  # 重复部署且这次没给 SMTP 参数：保留上次配好的，只更新站点地址
-  sed -i "/^DAZI_SITE_URL=/d" "$ENV_FILE"
-  echo "DAZI_SITE_URL=${SCHEME}://${DOMAIN}" >> "$ENV_FILE"
-else
-  {
-    echo "DAZI_SITE_URL=${SCHEME}://${DOMAIN}"
-    [[ -n "${DAZI_REQUIRE_LOGIN:-}" ]]  && echo "DAZI_REQUIRE_LOGIN=${DAZI_REQUIRE_LOGIN}"
-    [[ -n "${DAZI_ADMIN_USER:-}" ]]     && echo "DAZI_ADMIN_USER=${DAZI_ADMIN_USER}"
-    [[ -n "${DAZI_ADMIN_PASS:-}" ]]     && echo "DAZI_ADMIN_PASS=${DAZI_ADMIN_PASS}"
-    [[ -n "${DAZI_SMTP_HOST:-}" ]]      && echo "DAZI_SMTP_HOST=${DAZI_SMTP_HOST}"
-    [[ -n "${DAZI_SMTP_PORT:-}" ]]      && echo "DAZI_SMTP_PORT=${DAZI_SMTP_PORT}"
-    [[ -n "${DAZI_SMTP_USER:-}" ]]      && echo "DAZI_SMTP_USER=${DAZI_SMTP_USER}"
-    [[ -n "${DAZI_SMTP_PASS:-}" ]]      && echo "DAZI_SMTP_PASS=${DAZI_SMTP_PASS}"
-    [[ -n "${DAZI_SMTP_FROM:-}" ]]      && echo "DAZI_SMTP_FROM=${DAZI_SMTP_FROM}"
-    [[ -n "${DAZI_SMTP_FROM_NAME:-}" ]] && echo "DAZI_SMTP_FROM_NAME=${DAZI_SMTP_FROM_NAME}"
-    [[ -n "${DAZI_SMTP_SECURE:-}" ]]    && echo "DAZI_SMTP_SECURE=${DAZI_SMTP_SECURE}"
-    true
-  } > "$ENV_FILE"
-fi
+{
+  echo "DAZI_SITE_URL=${SCHEME}://${DOMAIN}"
+  # 记下这次用的域名，下次不带参数重跑就不会换掉站点
+  [[ -n "${DAZI_DUCKDNS_DOMAIN:-}" ]] && echo "DAZI_DUCKDNS_DOMAIN=${DAZI_DUCKDNS_DOMAIN}"
+  [[ -n "${DAZI_DUCKDNS_TOKEN:-}" ]] && echo "DAZI_DUCKDNS_TOKEN=${DAZI_DUCKDNS_TOKEN}"
+  [[ -z "${DAZI_DUCKDNS_DOMAIN:-}" ]] && echo "DAZI_DOMAIN=${DOMAIN}"
+  [[ -n "${DAZI_EMAIL:-}" ]]          && echo "DAZI_EMAIL=${DAZI_EMAIL}"
+  [[ -n "${DAZI_REQUIRE_LOGIN:-}" ]]  && echo "DAZI_REQUIRE_LOGIN=${DAZI_REQUIRE_LOGIN}"
+  [[ -n "${DAZI_ADMIN_USER:-}" ]]     && echo "DAZI_ADMIN_USER=${DAZI_ADMIN_USER}"
+  [[ -n "${DAZI_ADMIN_PASS:-}" ]]     && echo "DAZI_ADMIN_PASS=${DAZI_ADMIN_PASS}"
+  [[ -n "${DAZI_SMTP_HOST:-}" ]]      && echo "DAZI_SMTP_HOST=${DAZI_SMTP_HOST}"
+  [[ -n "${DAZI_SMTP_PORT:-}" ]]      && echo "DAZI_SMTP_PORT=${DAZI_SMTP_PORT}"
+  [[ -n "${DAZI_SMTP_USER:-}" ]]      && echo "DAZI_SMTP_USER=${DAZI_SMTP_USER}"
+  [[ -n "${DAZI_SMTP_PASS:-}" ]]      && echo "DAZI_SMTP_PASS=${DAZI_SMTP_PASS}"
+  [[ -n "${DAZI_SMTP_FROM:-}" ]]      && echo "DAZI_SMTP_FROM=${DAZI_SMTP_FROM}"
+  [[ -n "${DAZI_SMTP_FROM_NAME:-}" ]] && echo "DAZI_SMTP_FROM_NAME=${DAZI_SMTP_FROM_NAME}"
+  [[ -n "${DAZI_SMTP_SECURE:-}" ]]    && echo "DAZI_SMTP_SECURE=${DAZI_SMTP_SECURE}"
+  true
+} > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
+
 if grep -q '^DAZI_SMTP_HOST=' "$ENV_FILE"; then
   log "邮件提醒：已配置 $(sed -n 's/^DAZI_SMTP_HOST=//p' "$ENV_FILE")"
 else
