@@ -323,6 +323,67 @@ cp /var/lib/dazi/dazi.json ~/  # 备份全部数据
 
 ---
 
+## 附：在同一台服务器上跑 OpenClaw（模型接自己的 Kimi）
+
+跟站点本身没关系，只是复用了同一台机器和同一套部署习惯。
+
+```bash
+sudo OPENCLAW_KIMI_KEY=sk-xxx OPENCLAW_TG_TOKEN=<BotFather 给的 token> \
+  bash deploy/openclaw.sh
+```
+
+脚本会：备一份私有 Node（OpenClaw 要 >= 22.22.3，比 dazi 高得多，所以**不动系统 node**）→
+用独立账号 `openclaw` 装到 `/opt/openclaw` → 把 Kimi 写成自定义 provider →
+开 Telegram 通道 → 注册 `openclaw.service`，网关**只监听 127.0.0.1:18789**。
+
+动系统之前会先拿真凭据探一次 Kimi 和 Telegram，key 错了、模型名写错了、
+网络不通，当场就报，不会装到一半卡在 401。
+
+### 跟 dazi 的隔离
+
+这台机器上跑着生产站点，而 OpenClaw 是个**能执行终端命令**的 agent，所以：
+
+| | |
+| --- | --- |
+| 账号 | 独立系统账号 `openclaw`，无密码、无 sudo、不在任何特权组 |
+| 运行时 | 独立 Node 在 `/opt/openclaw-runtime`，dazi 的 node 原样不动 |
+| 可写范围 | 只有 `/var/lib/openclaw`（`ProtectSystem=strict`） |
+| 看不见 | `/home` 下所有家目录、`/var/lib/dazi`、`/etc/dazi.env` |
+| 网络 | 网关不开公网端口；监听地址跑偏时脚本会告警 |
+| 工具 | 默认 `coding` profile，可用 `OPENCLAW_TOOLS=minimal` 收紧 |
+
+从自己电脑用 Web 面板走 SSH 隧道，不要把 18789 暴露出去：
+
+```bash
+ssh -N -L 18789:127.0.0.1:18789 <用户名>@<服务器IP>
+# 然后浏览器打开 http://127.0.0.1:18789
+```
+
+### 环境变量
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `OPENCLAW_KIMI_KEY` | 无（必填） | Kimi API key，在 https://platform.kimi.ai 申请 |
+| `OPENCLAW_BASE_URL` | `https://api.moonshot.ai/v1` | 境内机器改用 `https://api.moonshot.cn/v1`；结尾换成 `/anthropic` 则自动切到 Anthropic 兼容适配器 |
+| `OPENCLAW_MODEL` | `kimi-k2.7-code` | 必须和 Kimi 那边**一字不差**，写错会静默打到别的模型 |
+| `OPENCLAW_TG_TOKEN` | 空 | Telegram bot token，找 @BotFather 用 `/newbot` 拿 |
+| `OPENCLAW_TG_ALLOW` | 空 | 你的 Telegram 数字 ID；不填则走配对模式，用 `openclaw pairing approve` 批准 |
+| `OPENCLAW_TOOLS` | `coding` | `minimal` / `coding` / `messaging` / `full` |
+| `OPENCLAW_PORT` | `18789` | 网关本地端口 |
+
+和 dazi 一样，设置记在 `/etc/openclaw.env`（600），重跑不带参数就是**升级 + 重启**，
+key 和 token 都沿用上次的。配置文件是深合并写入的，手工加的通道和策略不会被冲掉。
+
+不想要了：
+
+```bash
+sudo systemctl disable --now openclaw
+sudo rm -rf /opt/openclaw /opt/openclaw-runtime /var/lib/openclaw /etc/openclaw.env
+sudo rm -f /etc/systemd/system/openclaw.service && sudo systemctl daemon-reload
+```
+
+---
+
 ## API
 
 所有接口都基于 Cookie 里的身份，无需任何 token。
