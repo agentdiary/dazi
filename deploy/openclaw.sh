@@ -289,6 +289,11 @@ const managed = {
             input: ['text'],
             contextWindow: 262144,
             maxTokens: 16384,
+            // 只影响面板上的花费统计，不影响计费本身（账单以 Kimi 那边为准）。
+            // 数字是 kimi-k2.7-code 在国际站的价格，单位美元/百万 token。
+            // 换了模型或改用国内站（人民币计价）的话这里就不准了，
+            // 想看准确数字自己按 https://platform.kimi.ai/docs/pricing 改。
+            cost: { input: 0.95, output: 4.0, cacheRead: 0.19, cacheWrite: 0 },
           },
         ],
       },

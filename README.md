@@ -359,11 +359,35 @@ ssh -N -L 18789:127.0.0.1:18789 <用户名>@<服务器IP>
 # 然后浏览器打开 http://127.0.0.1:18789
 ```
 
+### 费用
+
+**API 调用是按 token 收费的，和 kimi.com 网页版 / App 是两套账**——
+App 那边的免费额度或会员权益用不到 API 上，要单独充值。
+
+`kimi-k2.7-code` 在国际站的价格（美元 / 百万 token）：
+
+| 输入（未命中缓存） | 输入（命中缓存） | 输出 |
+| --- | --- | --- |
+| $0.95 | $0.19 | $4.00 |
+
+Kimi 有自动上下文缓存，这对 agent 特别划算：每轮都要重发的系统提示词和工具定义
+基本全是缓存命中，按五分之一算。粗估：随口问一句约 ¥0.1，一个要动手的完整任务约 ¥1，
+中等强度天天用大约每月 ¥100–300。
+
+⚠️ OpenClaw 是常驻服务。**如果之后给它加了定时任务或主动提醒，它在你没用的时候也会烧 token。**
+装好后头几天盯一下 Kimi 后台的用量曲线。
+
+配置里写了 `cost` 字段，所以 OpenClaw 面板能直接显示花了多少——但那只是本地估算，
+账单以 Kimi 那边为准。换模型或改用国内站（人民币计价）之后这个数字就不准了。
+
+Kimi 也有 ¥49 起的 Code Plan 包月，官方支持 Kimi CLI / Claude Code / Roo Code / OpenCode，
+但订阅走的是限定客户端的专用端点，**OpenClaw 不在支持列表里，多半连不上**，别指望。
+
 ### 环境变量
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `OPENCLAW_KIMI_KEY` | 无（必填） | Kimi API key，在 https://platform.kimi.ai 申请 |
+| `OPENCLAW_KIMI_KEY` | 无（必填） | Kimi API key，在 https://platform.kimi.ai 申请（需单独充值，与 App 会员无关） |
 | `OPENCLAW_BASE_URL` | `https://api.moonshot.ai/v1` | 境内机器改用 `https://api.moonshot.cn/v1`；结尾换成 `/anthropic` 则自动切到 Anthropic 兼容适配器 |
 | `OPENCLAW_MODEL` | `kimi-k2.7-code` | 必须和 Kimi 那边**一字不差**，写错会静默打到别的模型 |
 | `OPENCLAW_TG_TOKEN` | 空 | Telegram bot token，找 @BotFather 用 `/newbot` 拿 |
